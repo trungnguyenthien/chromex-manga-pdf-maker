@@ -2,6 +2,7 @@
 const baseUrlInput = document.getElementById('baseUrl');
 const imageUrlFilterInput = document.getElementById('imageUrlFilter');
 const urlsChapterTextarea = document.getElementById('urlsChapter');
+const mangaTitleInput = document.getElementById('mangaTitle');
 const chaptersList = document.getElementById('chaptersList');
 const groupByButtons = document.querySelectorAll('.groupby-btn');
 const revertListBtn = document.getElementById('revertListBtn');
@@ -41,6 +42,11 @@ function setupEventListeners() {
 
   // Image URL Filter input
   imageUrlFilterInput.addEventListener('input', () => {
+    saveData();
+  });
+
+  // Manga Title input
+  mangaTitleInput.addEventListener('input', () => {
     saveData();
   });
 
@@ -355,7 +361,10 @@ async function generatePDF(images, partNumber) {
   });
   
   // Save PDF
-  const fileName = `manga-part-${partNumber}.pdf`;
+  const mangaTitle = mangaTitleInput.value.trim();
+  const fileName = mangaTitle 
+    ? `${mangaTitle}-part-${String(partNumber).padStart(2, '0')}.pdf`
+    : `manga-part-${String(partNumber).padStart(2, '0')}.pdf`;
   pdf.save(fileName);
 }
 
@@ -383,6 +392,7 @@ function saveData() {
     baseUrl: baseUrlInput.value,
     imageUrlFilter: imageUrlFilterInput.value,
     urlsChapter: urlsChapterTextarea.value,
+    mangaTitle: mangaTitleInput.value,
     groupBy: currentGroupBy,
     chapterUrls: chapterUrls
   };
@@ -409,6 +419,11 @@ function loadSavedData() {
     // Restore Image URL Filter
     if (data.imageUrlFilter) {
       imageUrlFilterInput.value = data.imageUrlFilter;
+    }
+    
+    // Restore Manga Title
+    if (data.mangaTitle) {
+      mangaTitleInput.value = data.mangaTitle;
     }
     
     // Restore URL's chapter and chapter URLs
