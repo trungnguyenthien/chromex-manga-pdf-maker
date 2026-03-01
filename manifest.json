@@ -20,5 +20,8 @@
   },
   "permissions": [
     "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
   ]
 }
