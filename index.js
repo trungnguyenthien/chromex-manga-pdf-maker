@@ -245,12 +245,12 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '') {
     const allImages = [];
     const totalChapters = urls.length;
     
-    // Step 1: Fetch all chapters and extract images
+    // Step 1: Fetch all chapters and extract images (0-5%)
     for (let i = 0; i < urls.length; i++) {
       const chapterUrl = urls[i];
       updatePartProgress(
         partIndex,
-        ((i / totalChapters) * 50),
+        ((i / totalChapters) * 5),
         `Fetching chapter ${i + 1}/${totalChapters}...`
       );
       
@@ -264,14 +264,14 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '') {
       return;
     }
     
-    updatePartProgress(partIndex, 50, `Found ${allImages.length} images. Processing...`);
+    updatePartProgress(partIndex, 5, `Found ${allImages.length} images. Processing...`);
     
-    // Step 2: Download and resize images
+    // Step 2: Download and resize images (5-97%, 92% total)
     const processedImages = [];
     for (let i = 0; i < allImages.length; i++) {
       updatePartProgress(
         partIndex,
-        50 + ((i / allImages.length) * 40),
+        5 + ((i / allImages.length) * 92),
         `Download image ${i + 1}/${allImages.length}...`
       );
       
@@ -291,8 +291,8 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '') {
       return;
     }
     
-    // Step 3: Generate PDF
-    updatePartProgress(partIndex, 90, 'Creating PDF...');
+    // Step 3: Generate PDF (97-100%, 3% total)
+    updatePartProgress(partIndex, 97, 'Creating PDF...');
     await generatePDF(processedImages, partNumber);
     
     updatePartProgress(partIndex, 100, 'Done!');
