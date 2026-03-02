@@ -82,6 +82,50 @@
   modal.appendChild(iframeContainer);
   document.body.appendChild(modal);
   
+  // Listen for messages from iframe to query current page DOM
+  window.addEventListener('message', (event) => {
+    // Only accept messages from our iframe
+    if (event.source !== iframe.contentWindow) return;
+    
+    if (event.data.action === 'queryChapterLinks') {
+      try {
+        const selector = event.data.selector;
+        const baseUrl = event.data.baseUrl || window.location.origin;
+        
+        // Query DOM for matching <a> tags
+        const anchors = document.querySelectorAll(selector);
+        const urls = [];
+        
+        anchors.forEach(anchor => {
+          let href = anchor.getAttribute('href');
+          if (href) {
+            // Convert relative URLs to absolute
+            if (href.startsWith('/')) {
+              href = baseUrl.replace(/\/$/, '') + href;
+            } else if (!href.startsWith('http')) {
+              href = baseUrl.replace(/\/$/, '') + '/' + href;
+            }
+            urls.push(href);
+          }
+        });
+        
+        // Send results back to iframe
+        iframe.contentWindow.postMessage({
+          action: 'queryChapterLinksResult',
+          urls: urls,
+          selector: selector
+        }, '*');
+        
+      } catch (error) {
+        iframe.contentWindow.postMessage({
+          action: 'queryChapterLinksResult',
+          error: error.message,
+          selector: event.data.selector
+        }, '*');
+      }
+    }
+  });
+  
   // Close on overlay click
   modal.addEventListener('click', (e) => {
     if (e.target === modal) {

@@ -15,6 +15,22 @@ let chapterUrls = [];
 document.addEventListener('DOMContentLoaded', () => {
   loadSavedData();
   setupEventListeners();
+  
+  // Listen for messages from content script (query results)
+  window.addEventListener('message', (event) => {
+    if (event.data.action === 'queryChapterLinksResult') {
+      if (event.data.error) {
+        console.error('Error querying page:', event.data.error);
+        alert(`Error querying selector "${event.data.selector}": ${event.data.error}`);
+        return;
+      }
+      
+      console.log(`Found ${event.data.urls.length} URLs using selector: ${event.data.selector}`);
+      chapterUrls = event.data.urls;
+      updateChaptersList();
+      saveData();
+    }
+  });
 });
 
 // Setup event listeners
@@ -58,9 +74,9 @@ function setupEventListeners() {
   });
 }
 
-// Parse chapter URLs from HTML
+// Parse chapter URLs from HTML or CSS selector
 function parseChapterUrls() {
-  const htmlContent = urlsChapterTextarea.value;
+  const htmlContent = urlsChapterTextarea.value.trim();
   const baseUrl = baseUrlInput.value.trim();
   
   if (!htmlContent) {
@@ -70,7 +86,33 @@ function parseChapterUrls() {
     return;
   }
 
-  // Create a temporary DOM element to parse HTML
+  // Check if input is a CSS selector (simple heuristic)
+  // CSS selectors typically don't contain < or > and are relatively short single lines
+  const looksLikeSelector = !htmlContent.includes('<') && 
+                            !htmlContent.includes('>') && 
+                            htmlContent.split('\n').length === 1 &&
+                            htmlContent.length < 200;
+  
+  if (looksLikeSelector) {
+    // Try to query current page DOM via content script
+    console.log('Detected CSS selector, querying current page:', htmlContent);
+    
+    // Show temporary message
+    chaptersList.innerHTML = '<div class="empty-message">Querying page with selector: ' + htmlContent + '...</div>';
+    
+    // Send message to parent window (content script)
+    window.parent.postMessage({
+      action: 'queryChapterLinks',
+      selector: htmlContent,
+      baseUrl: baseUrl
+    }, '*');
+    
+    // Result will be handled by message listener
+    return;
+  }
+
+  // Otherwise, parse as HTML
+  console.log('Parsing as HTML content');
   const tempDiv = document.createElement('div');
   tempDiv.innerHTML = htmlContent;
   
@@ -200,7 +242,7 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '') {
       );
       
       try {
-        const imgData = await downloadAndResizeImage(allImages[i], 700);
+        const imgData = await downloadAndResizeImage(allImages[i]);
         if (imgData) {
           processedImages.push(imgData);
         }
@@ -287,8 +329,8 @@ async function fetchAndExtractImages(url, filter) {
   }
 }
 
-// Download and resize image to target width
-async function downloadAndResizeImage(url, targetWidth) {
+// Download image and resize to 700px width
+async function downloadAndResizeImage(url) {
   try {
     // Use background script to fetch image (bypasses CORS, Referer set by declarativeNetRequest)
     const response = await chrome.runtime.sendMessage({
@@ -311,12 +353,21 @@ async function downloadAndResizeImage(url, targetWidth) {
       
       img.onload = () => {
         try {
-          // Calculate new dimensions
-          const aspectRatio = img.height / img.width;
-          const newWidth = targetWidth;
-          const newHeight = Math.floor(targetWidth * aspectRatio);
+          const originalWidth = img.width;
+          const originalHeight = img.height;
           
-          // Create canvas
+          // Always resize to 700px width
+          const targetWidth = 700;
+          const aspectRatio = originalHeight / originalWidth;
+          const newWidth = targetWidth;
+          const newHeight = Math.round(targetWidth * aspectRatio);
+          
+          // Detect orientation AFTER resize for PDF page layout
+          const isLandscape = newWidth > newHeight;
+          
+          console.log(`Image: ${originalWidth}x${originalHeight} → Resize to ${newWidth}x${newHeight} (${isLandscape ? 'Landscape' : 'Portrait'})`);
+          
+          // Create canvas with target dimensions
           const canvas = document.createElement('canvas');
           canvas.width = newWidth;
           canvas.height = newHeight;
@@ -331,7 +382,8 @@ async function downloadAndResizeImage(url, targetWidth) {
           resolve({
             data: imageData,
             width: newWidth,
-            height: newHeight
+            height: newHeight,
+            isLandscape: isLandscape
           });
         } catch (error) {
           reject(error);
@@ -358,31 +410,41 @@ async function generatePDF(images, partNumber) {
     throw new Error('No images to create PDF');
   }
   
-  // Use fixed width from first image, height varies per image
-  const fixedWidth = images[0].width;
-  const fixedMmWidth = (fixedWidth * 25.4) / 96;
+  // PDF standard DPI is 72
+  const PDF_DPI = 72;
+  const MM_PER_INCH = 25.4;
   
-  // Create PDF with first image dimensions
-  const firstImgMmHeight = (images[0].height * 25.4) / 96;
+  console.log(`Creating PDF with ${images.length} images (mixed orientations supported)`);
   
-  const pdf = new jsPDF({
-    orientation: 'portrait',
-    unit: 'mm',
-    format: [fixedMmWidth, firstImgMmHeight]
-  });
+  // Create PDF - will use first image to initialize
+  let pdf = null;
   
-  // Add images to PDF - each page with its own height
+  // Add images to PDF - each page with its own dimensions and orientation
   images.forEach((img, index) => {
-    const imgMmWidth = (img.width * 25.4) / 96;
-    const imgMmHeight = (img.height * 25.4) / 96;
+    // Calculate page dimensions in mm based on THIS image
+    const pageMmWidth = (img.width / PDF_DPI) * MM_PER_INCH;
+    const pageMmHeight = (img.height / PDF_DPI) * MM_PER_INCH;
     
-    if (index > 0) {
-      // Add new page with this image's specific height
-      pdf.addPage([fixedMmWidth, imgMmHeight]);
+    // Determine orientation based on image dimensions
+    const orientation = img.isLandscape ? 'landscape' : 'portrait';
+    
+    console.log(`Page ${index + 1}: ${img.width}x${img.height}px (${orientation}) → ${pageMmWidth.toFixed(2)}x${pageMmHeight.toFixed(2)}mm`);
+    
+    if (index === 0) {
+      // Create PDF with first image's dimensions and orientation
+      pdf = new jsPDF({
+        orientation: orientation,
+        unit: 'mm',
+        format: [pageMmWidth, pageMmHeight],
+        compress: true
+      });
+    } else {
+      // Add new page with THIS image's specific dimensions and orientation
+      pdf.addPage([pageMmWidth, pageMmHeight], orientation);
     }
     
-    // Add image to current page
-    pdf.addImage(img.data, 'JPEG', 0, 0, imgMmWidth, imgMmHeight);
+    // Add image to fill entire page exactly - no margins
+    pdf.addImage(img.data, 'JPEG', 0, 0, pageMmWidth, pageMmHeight, undefined, 'FAST');
   });
   
   // Save PDF
