@@ -106,9 +106,15 @@ function updateChaptersList() {
   
   chaptersList.innerHTML = parts.map((part, index) => {
     return `
-      <div class="chapter-part">
+      <div class="chapter-part" id="part-${index}">
         <div class="chapter-part-header">
           <button class="make-part-btn" data-part="${index}">Make Part ${index + 1}</button>
+          <div class="part-progress" style="display: none;">
+            <div class="progress-bar-inline">
+              <div class="progress-fill-inline"></div>
+            </div>
+            <div class="progress-text-inline">Initializing...</div>
+          </div>
         </div>
         <div class="chapter-urls">
           ${part.map(url => `<div class="chapter-url">${url}</div>`).join('')}
@@ -121,7 +127,7 @@ function updateChaptersList() {
   document.querySelectorAll('.make-part-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const partIndex = parseInt(e.target.dataset.part);
-      makePart(parts[partIndex], partIndex + 1);
+      makePart(parts[partIndex], partIndex + 1, partIndex);
     });
   });
 }
@@ -140,14 +146,16 @@ function groupChapters(urls, groupBy) {
 }
 
 // Make PDF from a part
-async function makePart(urls, partNumber) {
+async function makePart(urls, partNumber, partIndex) {
   console.log(`Making Part ${partNumber}:`, urls);
   
   const filter = imageUrlFilterInput.value.trim();
   
+  // Show progress UI for this specific part
+  showPartProgress(partIndex, true);
+  
   try {
-    showProgress(true);
-    updateProgress(0, 'Initializing...');
+    updatePartProgress(partIndex, 0, 'Initializing...');
     
     const allImages = [];
     const totalChapters = urls.length;
@@ -155,7 +163,8 @@ async function makePart(urls, partNumber) {
     // Step 1: Fetch all chapters and extract images
     for (let i = 0; i < urls.length; i++) {
       const chapterUrl = urls[i];
-      updateProgress(
+      updatePartProgress(
+        partIndex,
         ((i / totalChapters) * 50),
         `Fetching chapter ${i + 1}/${totalChapters}...`
       );
@@ -165,19 +174,20 @@ async function makePart(urls, partNumber) {
     }
     
     if (allImages.length === 0) {
-      alert('No images found in the chapters!');
-      showProgress(false);
+      updatePartProgress(partIndex, 0, 'No images found!');
+      setTimeout(() => showPartProgress(partIndex, false), 2000);
       return;
     }
     
-    updateProgress(50, `Found ${allImages.length} images. Downloading and processing...`);
+    updatePartProgress(partIndex, 50, `Found ${allImages.length} images. Processing...`);
     
     // Step 2: Download and resize images
     const processedImages = [];
     for (let i = 0; i < allImages.length; i++) {
-      updateProgress(
+      updatePartProgress(
+        partIndex,
         50 + ((i / allImages.length) * 40),
-        `Processing image ${i + 1}/${allImages.length}...`
+        `Download image ${i + 1}/${allImages.length}...`
       );
       
       try {
@@ -191,22 +201,22 @@ async function makePart(urls, partNumber) {
     }
     
     if (processedImages.length === 0) {
-      alert('Failed to process any images!');
-      showProgress(false);
+      updatePartProgress(partIndex, 0, 'Failed to process images!');
+      setTimeout(() => showPartProgress(partIndex, false), 2000);
       return;
     }
     
     // Step 3: Generate PDF
-    updateProgress(90, 'Creating PDF...');
+    updatePartProgress(partIndex, 90, 'Creating PDF...');
     await generatePDF(processedImages, partNumber);
     
-    updateProgress(100, 'Done!');
-    setTimeout(() => showProgress(false), 1000);
+    updatePartProgress(partIndex, 100, 'Done!');
+    setTimeout(() => showPartProgress(partIndex, false), 1500);
     
   } catch (error) {
     console.error('Error creating PDF:', error);
-    alert(`Error creating PDF: ${error.message}`);
-    showProgress(false);
+    updatePartProgress(partIndex, 0, `Error: ${error.message}`);
+    setTimeout(() => showPartProgress(partIndex, false), 3000);
   }
 }
 
@@ -368,22 +378,32 @@ async function generatePDF(images, partNumber) {
   pdf.save(fileName);
 }
 
-// Progress modal helpers
-function showProgress(show) {
-  const modal = document.getElementById('progressModal');
+// Inline progress helpers for each part
+function showPartProgress(partIndex, show) {
+  const partEl = document.getElementById(`part-${partIndex}`);
+  if (!partEl) return;
+  
+  const btn = partEl.querySelector('.make-part-btn');
+  const progress = partEl.querySelector('.part-progress');
+  
   if (show) {
-    modal.classList.add('active');
+    btn.style.display = 'none';
+    progress.style.display = 'flex';
   } else {
-    modal.classList.remove('active');
+    btn.style.display = 'block';
+    progress.style.display = 'none';
   }
 }
 
-function updateProgress(percent, text) {
-  const fill = document.getElementById('progressFill');
-  const textEl = document.getElementById('progressText');
+function updatePartProgress(partIndex, percent, text) {
+  const partEl = document.getElementById(`part-${partIndex}`);
+  if (!partEl) return;
   
-  fill.style.width = `${percent}%`;
-  textEl.textContent = text;
+  const fill = partEl.querySelector('.progress-fill-inline');
+  const textEl = partEl.querySelector('.progress-text-inline');
+  
+  if (fill) fill.style.width = `${percent}%`;
+  if (textEl) textEl.textContent = text;
 }
 
 // Save data to localStorage
