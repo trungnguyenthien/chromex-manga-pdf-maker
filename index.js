@@ -127,7 +127,8 @@ function updateChaptersList() {
   document.querySelectorAll('.make-part-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const partIndex = parseInt(e.target.dataset.part);
-      makePart(parts[partIndex], partIndex + 1, partIndex);
+      const baseUrl = baseUrlInput.value.trim();
+      makePart(parts[partIndex], partIndex + 1, partIndex, baseUrl);
     });
   });
 }
@@ -146,7 +147,7 @@ function groupChapters(urls, groupBy) {
 }
 
 // Make PDF from a part
-async function makePart(urls, partNumber, partIndex) {
+async function makePart(urls, partNumber, partIndex, baseUrl = '') {
   console.log(`Making Part ${partNumber}:`, urls);
   
   const filter = imageUrlFilterInput.value.trim();
@@ -156,6 +157,14 @@ async function makePart(urls, partNumber, partIndex) {
   
   try {
     updatePartProgress(partIndex, 0, 'Initializing...');
+    
+    // Set referer header for all image requests
+    if (baseUrl) {
+      await chrome.runtime.sendMessage({
+        action: 'setReferer',
+        referer: baseUrl
+      });
+    }
     
     const allImages = [];
     const totalChapters = urls.length;
@@ -281,7 +290,7 @@ async function fetchAndExtractImages(url, filter) {
 // Download and resize image to target width
 async function downloadAndResizeImage(url, targetWidth) {
   try {
-    // Use background script to fetch image (bypasses CORS)
+    // Use background script to fetch image (bypasses CORS, Referer set by declarativeNetRequest)
     const response = await chrome.runtime.sendMessage({
       action: 'fetchImage',
       url: url
@@ -289,6 +298,11 @@ async function downloadAndResizeImage(url, targetWidth) {
     
     if (!response.success) {
       throw new Error(response.error);
+    }
+    
+    // Validate data URL
+    if (!response.dataUrl || !response.dataUrl.startsWith('data:')) {
+      throw new Error(`Invalid data URL received for ${url}`);
     }
     
     // Create image from base64 data URL
@@ -324,7 +338,8 @@ async function downloadAndResizeImage(url, targetWidth) {
         }
       };
       
-      img.onerror = () => {
+      img.onerror = (e) => {
+        console.error('Image load error:', url, 'Data URL prefix:', response.dataUrl.substring(0, 100));
         reject(new Error(`Failed to load image: ${url}`));
       };
       

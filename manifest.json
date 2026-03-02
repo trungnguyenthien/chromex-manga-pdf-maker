@@ -19,9 +19,32 @@
     "128": "icons/icon128.png"
   },
   "permissions": [
-    "tabs"
+    "tabs",
+    "scripting",
+    "activeTab",
+    "declarativeNetRequest"
   ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "referer_rules",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
   "host_permissions": [
     "<all_urls>"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "index.html",
+        "index.css",
+        "index.js",
+        "lib/jspdf.umd.min.js"
+      ],
+      "matches": ["<all_urls>"]
+    }
   ]
 }
