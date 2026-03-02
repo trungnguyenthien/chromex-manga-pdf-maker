@@ -358,30 +358,30 @@ async function generatePDF(images, partNumber) {
     throw new Error('No images to create PDF');
   }
   
-  // Use first image to determine page size
-  const firstImg = images[0];
-  const pageWidth = firstImg.width;
-  const pageHeight = firstImg.height;
+  // Use fixed width from first image, height varies per image
+  const fixedWidth = images[0].width;
+  const fixedMmWidth = (fixedWidth * 25.4) / 96;
   
-  // Create PDF (dimensions in mm, convert from pixels assuming 96 DPI)
-  const mmWidth = (pageWidth * 25.4) / 96;
-  const mmHeight = (pageHeight * 25.4) / 96;
+  // Create PDF with first image dimensions
+  const firstImgMmHeight = (images[0].height * 25.4) / 96;
   
   const pdf = new jsPDF({
-    orientation: pageHeight > pageWidth ? 'portrait' : 'landscape',
+    orientation: 'portrait',
     unit: 'mm',
-    format: [mmWidth, mmHeight]
+    format: [fixedMmWidth, firstImgMmHeight]
   });
   
-  // Add images to PDF
+  // Add images to PDF - each page with its own height
   images.forEach((img, index) => {
-    if (index > 0) {
-      pdf.addPage([mmWidth, mmHeight]);
-    }
-    
     const imgMmWidth = (img.width * 25.4) / 96;
     const imgMmHeight = (img.height * 25.4) / 96;
     
+    if (index > 0) {
+      // Add new page with this image's specific height
+      pdf.addPage([fixedMmWidth, imgMmHeight]);
+    }
+    
+    // Add image to current page
     pdf.addImage(img.data, 'JPEG', 0, 0, imgMmWidth, imgMmHeight);
   });
   
