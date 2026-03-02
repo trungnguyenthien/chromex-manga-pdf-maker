@@ -10,14 +10,48 @@ const revertListBtn = document.getElementById('revertListBtn');
 // State
 let currentGroupBy = 2;
 let chapterUrls = [];
+let hasReceivedPageInfo = false; // Flag to track first pageInfo
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
   loadSavedData();
   setupEventListeners();
   
-  // Listen for messages from content script (query results)
+  // Listen for messages from content script
   window.addEventListener('message', (event) => {
+    // Handle page info from content script
+    if (event.data.action === 'pageInfo') {
+      console.log('Received page info:', event.data);
+      
+      // Auto-fill Base URL if not already set
+      if (!baseUrlInput.value.trim() || baseUrlInput.value === 'https://comics.vn/') {
+        baseUrlInput.value = event.data.origin;
+      }
+      
+      // Auto-fill Manga Title from page title - always update on first pageInfo
+      if (!hasReceivedPageInfo) {
+        hasReceivedPageInfo = true;
+        // Clean up the title (remove common suffixes like " - Read Online", etc.)
+        let cleanTitle = event.data.title
+          .replace(/\s*[-|]\s*(Read Online|Manga|Chapter|Latest).*$/i, '')
+          .trim();
+        mangaTitleInput.value = cleanTitle;
+        saveData();
+      }
+      
+      // Auto-query chapters if we have a saved selector
+      const savedSelector = urlsChapterTextarea.value.trim();
+      if (savedSelector && !savedSelector.includes('<') && !savedSelector.includes('>')) {
+        console.log('Auto-querying with saved selector:', savedSelector);
+        window.parent.postMessage({
+          action: 'queryChapterLinks',
+          selector: savedSelector,
+          baseUrl: baseUrlInput.value.trim()
+        }, '*');
+      }
+    }
+    
+    // Handle query results
     if (event.data.action === 'queryChapterLinksResult') {
       if (event.data.error) {
         console.error('Error querying page:', event.data.error);

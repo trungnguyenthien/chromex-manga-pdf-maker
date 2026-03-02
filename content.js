@@ -76,6 +76,16 @@
     border: none;
   `;
   
+  // Send page info to iframe once it's loaded
+  iframe.onload = () => {
+    iframe.contentWindow.postMessage({
+      action: 'pageInfo',
+      title: document.title,
+      url: window.location.href,
+      origin: window.location.origin
+    }, '*');
+  };
+  
   // Assemble
   iframeContainer.appendChild(closeBtn);
   iframeContainer.appendChild(iframe);
