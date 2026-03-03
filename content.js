@@ -102,20 +102,39 @@
         const selector = event.data.selector;
         const baseUrl = event.data.baseUrl || window.location.origin;
         
-        // Query DOM for matching <a> tags
-        const anchors = document.querySelectorAll(selector);
+        // Query DOM with selector
+        const elements = document.querySelectorAll(selector);
         const urls = [];
         
-        anchors.forEach(anchor => {
-          let href = anchor.getAttribute('href');
-          if (href) {
-            // Convert relative URLs to absolute
-            if (href.startsWith('/')) {
-              href = baseUrl.replace(/\/$/, '') + href;
-            } else if (!href.startsWith('http')) {
-              href = baseUrl.replace(/\/$/, '') + '/' + href;
+        elements.forEach(element => {
+          // Check if element is an <a> tag
+          if (element.tagName === 'A') {
+            // Direct <a> tag, get its href
+            let href = element.getAttribute('href');
+            if (href) {
+              // Convert relative URLs to absolute
+              if (href.startsWith('/')) {
+                href = baseUrl.replace(/\/$/, '') + href;
+              } else if (!href.startsWith('http')) {
+                href = baseUrl.replace(/\/$/, '') + '/' + href;
+              }
+              urls.push(href);
             }
-            urls.push(href);
+          } else {
+            // Container element, find all <a> tags inside
+            const anchorsInside = element.querySelectorAll('a');
+            anchorsInside.forEach(anchor => {
+              let href = anchor.getAttribute('href');
+              if (href) {
+                // Convert relative URLs to absolute
+                if (href.startsWith('/')) {
+                  href = baseUrl.replace(/\/$/, '') + href;
+                } else if (!href.startsWith('http')) {
+                  href = baseUrl.replace(/\/$/, '') + '/' + href;
+                }
+                urls.push(href);
+              }
+            });
           }
         });
         

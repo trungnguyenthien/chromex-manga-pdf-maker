@@ -222,6 +222,11 @@ function groupChapters(urls, groupBy) {
   return parts;
 }
 
+// Helper function to add delay between requests
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // Make PDF from a part
 async function makePart(urls, partNumber, partIndex, baseUrl = '') {
   console.log(`Making Part ${partNumber}:`, urls);
@@ -256,6 +261,11 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '') {
       
       const imageUrls = await fetchAndExtractImages(chapterUrl, filter);
       allImages.push(...imageUrls);
+      
+      // Add 200ms delay between chapter requests (except for the last one)
+      if (i < urls.length - 1) {
+        await delay(500);
+      }
     }
     
     if (allImages.length === 0) {
