@@ -11,6 +11,7 @@ const revertListBtn = document.getElementById('revertListBtn');
 let currentGroupBy = 2;
 let chapterUrls = [];
 let hasReceivedPageInfo = false; // Flag to track first pageInfo
+let hasAutoReversed = false; // Flag to track if list was auto-reversed once
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -64,6 +65,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if (chapterUrls.length < event.data.urls.length) {
         console.log(`Removed ${event.data.urls.length - chapterUrls.length} duplicate URL(s). Final count: ${chapterUrls.length}`);
       }
+      
+      // Auto-reverse list once on first parse
+      if (!hasAutoReversed && chapterUrls.length > 0) {
+        console.log('Auto-reversing chapter list (first time)');
+        chapterUrls.reverse();
+        hasAutoReversed = true;
+      }
+      
       updateChaptersList();
       saveData();
     }
@@ -172,6 +181,13 @@ function parseChapterUrls() {
 
   // Remove duplicates
   chapterUrls = removeDuplicateUrls(chapterUrls);
+
+  // Auto-reverse list once on first parse
+  if (!hasAutoReversed && chapterUrls.length > 0) {
+    console.log('Auto-reversing chapter list (first time)');
+    chapterUrls.reverse();
+    hasAutoReversed = true;
+  }
 
   updateChaptersList();
   saveData();
