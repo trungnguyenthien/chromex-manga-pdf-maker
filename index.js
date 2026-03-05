@@ -337,33 +337,26 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
 }
 
 // Fetch chapter HTML and extract image URLs
+// NEW: Opens chapter in real browser tab to allow JavaScript execution
+// This enables support for lazy-loading and dynamic content
 async function fetchAndExtractImages(url, filter) {
   try {
-    // Use background script to fetch HTML (bypasses CORS)
+    // Use background script to open chapter in real tab and extract images
+    // This allows JavaScript to execute and lazy-load images
     const response = await chrome.runtime.sendMessage({
-      action: 'fetchHtml',
-      url: url
+      action: 'fetchChapterImages',
+      url: url,
+      filter: filter
     });
     
     if (!response.success) {
       throw new Error(response.error);
     }
     
-    const html = response.html;
+    let imageUrls = response.imageUrls || [];
     
-    // Parse HTML
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    
-    // Get base URL for resolving relative paths
-    const baseUrl = new URL(url);
-    
-    let images;
-    let isFilterSelector = false;
-    
-    // Check if filter is a CSS selector
+    // Apply filter if provided
     if (filter && filter.trim()) {
-      // Improved selector detection
       const trimmedFilter = filter.trim();
       const hasClassOrIdOrAttr = trimmedFilter.includes('.') || 
                                   trimmedFilter.includes('#') || 
@@ -375,66 +368,15 @@ async function fetchAndExtractImages(url, filter) {
                            trimmedFilter.includes('.webp') ||
                            trimmedFilter.includes('.gif');
       
-      // Looks like a selector if it has CSS syntax and doesn't look like a URL
+      // If filter looks like a CSS selector, we already handled it server-side
+      // If it's a text filter, apply it here
       const looksLikeSelector = hasClassOrIdOrAttr && !hasUrlPattern;
       
-      if (looksLikeSelector) {
-        // Try to use filter as CSS selector to find container(s)
-        try {
-          const containers = doc.querySelectorAll(trimmedFilter);
-          if (containers.length > 0) {
-            console.log(`Using CSS selector "${trimmedFilter}" - found ${containers.length} container(s)`);
-            isFilterSelector = true;
-            
-            // Get all img tags from all matched containers
-            const allImagesInContainers = [];
-            containers.forEach(container => {
-              const imgsInContainer = container.querySelectorAll('img');
-              allImagesInContainers.push(...imgsInContainer);
-            });
-            images = allImagesInContainers;
-          }
-        } catch (e) {
-          console.warn(`Filter "${trimmedFilter}" is not a valid CSS selector, using as text filter:`, e.message);
-        }
+      if (!looksLikeSelector) {
+        // Apply text filter
+        imageUrls = imageUrls.filter(url => url.includes(trimmedFilter));
       }
     }
-    
-    // If filter is not a selector or no containers found, get all img tags
-    if (!isFilterSelector) {
-      images = doc.querySelectorAll('img');
-    }
-    
-    const imageUrls = [];
-    
-    images.forEach(img => {
-      // Get src from various attributes (use getAttribute to get original value)
-      let src = img.getAttribute('src') || 
-                img.getAttribute('data-src') || 
-                img.getAttribute('data-original') ||
-                img.getAttribute('data-lazy-src');
-      
-      if (src) {
-        // Convert relative URLs to absolute URLs
-        if (src.startsWith('//')) {
-          src = baseUrl.protocol + src;
-        } else if (src.startsWith('/')) {
-          src = baseUrl.origin + src;
-        } else if (!src.startsWith('http')) {
-          src = new URL(src, url).href;
-        }
-        
-        // Apply text filter only if filter was not used as a selector
-        if (!isFilterSelector) {
-          if (!filter || src.includes(filter)) {
-            imageUrls.push(src);
-          }
-        } else {
-          // If using selector, include all images from container
-          imageUrls.push(src);
-        }
-      }
-    });
     
     return imageUrls;
     

@@ -85,6 +85,146 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
+  if (request.action === 'fetchChapterImages') {
+    // Open chapter in new tab, wait for JS to load, then extract images
+    const chapterUrl = request.url;
+    const filter = request.filter || '';
+    
+    console.log('=== Fetch Chapter Images (Real Tab) ===');
+    console.log('URL:', chapterUrl);
+    console.log('Filter:', filter);
+    
+    // Create new tab
+    chrome.tabs.create({ url: chapterUrl, active: false }, async (tab) => {
+      try {
+        const tabId = tab.id;
+        
+        // Wait for tab to finish loading
+        await new Promise((resolve) => {
+          const listener = (changedTabId, changeInfo) => {
+            if (changedTabId === tabId && changeInfo.status === 'complete') {
+              chrome.tabs.onUpdated.removeListener(listener);
+              resolve();
+            }
+          };
+          chrome.tabs.onUpdated.addListener(listener);
+        });
+        
+        // Wait additional time for JavaScript to execute and images to lazy-load
+        // Adjust this delay if needed (in milliseconds)
+        const LOAD_DELAY = 1000; // 1 second
+        await new Promise(resolve => setTimeout(resolve, LOAD_DELAY));
+        
+        console.log('Tab loaded, extracting images...');
+        
+        // Inject script to extract image URLs
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          func: (filterParam) => {
+            const currentUrl = window.location.href;
+            const baseUrl = new URL(currentUrl);
+            
+            // Check if filter is a CSS selector
+            let imagesToProcess;
+            let isFilterSelector = false;
+            
+            if (filterParam && filterParam.trim()) {
+              const trimmedFilter = filterParam.trim();
+              const hasClassOrIdOrAttr = trimmedFilter.includes('.') || 
+                                        trimmedFilter.includes('#') || 
+                                        trimmedFilter.includes('[');
+              const hasUrlPattern = trimmedFilter.includes('http') || 
+                                   trimmedFilter.includes('cdn') ||
+                                   trimmedFilter.includes('.jpg') ||
+                                   trimmedFilter.includes('.png') ||
+                                   trimmedFilter.includes('.webp') ||
+                                   trimmedFilter.includes('.gif');
+              
+              const looksLikeSelector = hasClassOrIdOrAttr && !hasUrlPattern;
+              
+              if (looksLikeSelector) {
+                // Try to use filter as CSS selector
+                try {
+                  const containers = document.querySelectorAll(trimmedFilter);
+                  if (containers.length > 0) {
+                    isFilterSelector = true;
+                    const allImagesInContainers = [];
+                    containers.forEach(container => {
+                      const imgsInContainer = container.querySelectorAll('img');
+                      allImagesInContainers.push(...imgsInContainer);
+                    });
+                    imagesToProcess = allImagesInContainers;
+                  }
+                } catch (e) {
+                  // Invalid selector, fall back to all images
+                  console.warn('Invalid CSS selector, using all images');
+                }
+              }
+            }
+            
+            // If no selector or selector didn't work, get all images
+            if (!imagesToProcess) {
+              imagesToProcess = document.querySelectorAll('img');
+            }
+            
+            const imageUrls = [];
+            
+            imagesToProcess.forEach(img => {
+              let src = img.getAttribute('src') || 
+                       img.getAttribute('data-src') || 
+                       img.getAttribute('data-original') ||
+                       img.getAttribute('data-lazy-src') ||
+                       img.currentSrc;
+              
+              if (src) {
+                // Convert relative URLs to absolute
+                if (src.startsWith('//')) {
+                  src = baseUrl.protocol + src;
+                } else if (src.startsWith('/')) {
+                  src = baseUrl.origin + src;
+                } else if (!src.startsWith('http')) {
+                  try {
+                    src = new URL(src, currentUrl).href;
+                  } catch (e) {
+                    console.warn('Failed to parse URL:', src);
+                  }
+                }
+                
+                imageUrls.push(src);
+              }
+            });
+            
+            return { urls: imageUrls, pageUrl: currentUrl };
+          },
+          args: [filter]
+        });
+        
+        // Close the tab
+        chrome.tabs.remove(tabId);
+        
+        const imageData = results[0].result;
+        console.log(`✓ Extracted ${imageData.urls.length} images`);
+        console.log('===================================\n');
+        
+        sendResponse({ 
+          success: true, 
+          imageUrls: imageData.urls,
+          pageUrl: imageData.pageUrl
+        });
+        
+      } catch (error) {
+        console.error('✗ Error extracting images:', error);
+        // Try to close tab if it exists
+        if (tab && tab.id) {
+          chrome.tabs.remove(tab.id).catch(() => {});
+        }
+        sendResponse({ success: false, error: error.message });
+      }
+    });
+    
+    return true; // Keep channel open for async response
+  }
+  
   if (request.action === 'fetchImage') {
     // Log request details
     console.log('=== Image Fetch Request ===');
