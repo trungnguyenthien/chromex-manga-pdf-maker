@@ -191,11 +191,13 @@ function updateChaptersList() {
 
   const parts = groupChapters(chapterUrls, currentGroupBy);
   
-  chaptersList.innerHTML = parts.map((part, index) => {
+  let globalIndex = 0; // Track global index across all parts
+  
+  chaptersList.innerHTML = parts.map((part, partIndex) => {
     return `
-      <div class="chapter-part" id="part-${index}">
+      <div class="chapter-part" id="part-${partIndex}">
         <div class="chapter-part-header">
-          <button class="make-part-btn" data-part="${index}">Make Part ${index + 1}</button>
+          <button class="make-part-btn" data-part="${partIndex}">Make Part ${partIndex + 1}</button>
           <div class="part-progress" style="display: none;">
             <div class="progress-bar-inline">
               <div class="progress-fill-inline"></div>
@@ -204,7 +206,15 @@ function updateChaptersList() {
           </div>
         </div>
         <div class="chapter-urls">
-          ${part.map(url => `<div class="chapter-url">${url}</div>`).join('')}
+          ${part.map((url) => {
+            const currentIndex = globalIndex++;
+            return `
+              <div class="chapter-url-item">
+                <button class="remove-chapter-btn" data-index="${currentIndex}" title="Remove this chapter">&times;</button>
+                <div class="chapter-url">${url}</div>
+              </div>
+            `;
+          }).join('')}
         </div>
       </div>
     `;
@@ -218,6 +228,28 @@ function updateChaptersList() {
       makePart(parts[partIndex], partIndex + 1, partIndex, baseUrl, parts.length);
     });
   });
+  
+  // Add event listeners to "Remove Chapter" buttons
+  document.querySelectorAll('.remove-chapter-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const urlIndex = parseInt(e.target.dataset.index);
+      removeChapterUrl(urlIndex);
+    });
+  });
+}
+
+// Remove a chapter URL by index
+function removeChapterUrl(index) {
+  if (index >= 0 && index < chapterUrls.length) {
+    const removedUrl = chapterUrls[index];
+    chapterUrls.splice(index, 1);
+    console.log(`Removed chapter URL at index ${index}: ${removedUrl}`);
+    console.log(`Remaining chapters: ${chapterUrls.length}`);
+    
+    // Re-group and update display
+    updateChaptersList();
+    saveData();
+  }
 }
 
 // Group chapters based on groupBy value
