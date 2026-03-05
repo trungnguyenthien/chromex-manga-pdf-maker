@@ -60,7 +60,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       
       console.log(`Found ${event.data.urls.length} URLs using selector: ${event.data.selector}`);
-      chapterUrls = event.data.urls;
+      chapterUrls = removeDuplicateUrls(event.data.urls);
+      if (chapterUrls.length < event.data.urls.length) {
+        console.log(`Removed ${event.data.urls.length - chapterUrls.length} duplicate URL(s). Final count: ${chapterUrls.length}`);
+      }
       updateChaptersList();
       saveData();
     }
@@ -167,8 +170,16 @@ function parseChapterUrls() {
     }
   });
 
+  // Remove duplicates
+  chapterUrls = removeDuplicateUrls(chapterUrls);
+
   updateChaptersList();
   saveData();
+}
+
+// Helper function to remove duplicate URLs while preserving order
+function removeDuplicateUrls(urls) {
+  return [...new Set(urls)];
 }
 
 // Update chapters list display
@@ -204,7 +215,7 @@ function updateChaptersList() {
     btn.addEventListener('click', (e) => {
       const partIndex = parseInt(e.target.dataset.part);
       const baseUrl = baseUrlInput.value.trim();
-      makePart(parts[partIndex], partIndex + 1, partIndex, baseUrl);
+      makePart(parts[partIndex], partIndex + 1, partIndex, baseUrl, parts.length);
     });
   });
 }
@@ -228,7 +239,7 @@ function delay(ms) {
 }
 
 // Make PDF from a part
-async function makePart(urls, partNumber, partIndex, baseUrl = '') {
+async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 1) {
   console.log(`Making Part ${partNumber}:`, urls);
   
   const filter = imageUrlFilterInput.value.trim();
@@ -260,6 +271,16 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '') {
       );
       
       const imageUrls = await fetchAndExtractImages(chapterUrl, filter);
+      
+      // Log image URLs for this chapter
+      console.log(`\n=== Chapter ${i + 1}/${totalChapters} ===`);
+      console.log(`URL: ${chapterUrl}`);
+      console.log(`Found ${imageUrls.length} images:`);
+      imageUrls.forEach((url, idx) => {
+        console.log(`  [${idx + 1}] ${url}`);
+      });
+      console.log(`==================\n`);
+      
       allImages.push(...imageUrls);
       
       // Add 200ms delay between chapter requests (except for the last one)
@@ -303,7 +324,7 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '') {
     
     // Step 3: Generate PDF (97-100%, 3% total)
     updatePartProgress(partIndex, 97, 'Creating PDF...');
-    await generatePDF(processedImages, partNumber);
+    await generatePDF(processedImages, partNumber, totalParts);
     
     updatePartProgress(partIndex, 100, 'Done!');
     setTimeout(() => showPartProgress(partIndex, false), 1500);
@@ -337,8 +358,53 @@ async function fetchAndExtractImages(url, filter) {
     // Get base URL for resolving relative paths
     const baseUrl = new URL(url);
     
-    // Extract all img tags
-    const images = doc.querySelectorAll('img');
+    let images;
+    let isFilterSelector = false;
+    
+    // Check if filter is a CSS selector
+    if (filter && filter.trim()) {
+      // Improved selector detection
+      const trimmedFilter = filter.trim();
+      const hasClassOrIdOrAttr = trimmedFilter.includes('.') || 
+                                  trimmedFilter.includes('#') || 
+                                  trimmedFilter.includes('[');
+      const hasUrlPattern = trimmedFilter.includes('http') || 
+                           trimmedFilter.includes('cdn') ||
+                           trimmedFilter.includes('.jpg') ||
+                           trimmedFilter.includes('.png') ||
+                           trimmedFilter.includes('.webp') ||
+                           trimmedFilter.includes('.gif');
+      
+      // Looks like a selector if it has CSS syntax and doesn't look like a URL
+      const looksLikeSelector = hasClassOrIdOrAttr && !hasUrlPattern;
+      
+      if (looksLikeSelector) {
+        // Try to use filter as CSS selector to find container(s)
+        try {
+          const containers = doc.querySelectorAll(trimmedFilter);
+          if (containers.length > 0) {
+            console.log(`Using CSS selector "${trimmedFilter}" - found ${containers.length} container(s)`);
+            isFilterSelector = true;
+            
+            // Get all img tags from all matched containers
+            const allImagesInContainers = [];
+            containers.forEach(container => {
+              const imgsInContainer = container.querySelectorAll('img');
+              allImagesInContainers.push(...imgsInContainer);
+            });
+            images = allImagesInContainers;
+          }
+        } catch (e) {
+          console.warn(`Filter "${trimmedFilter}" is not a valid CSS selector, using as text filter:`, e.message);
+        }
+      }
+    }
+    
+    // If filter is not a selector or no containers found, get all img tags
+    if (!isFilterSelector) {
+      images = doc.querySelectorAll('img');
+    }
+    
     const imageUrls = [];
     
     images.forEach(img => {
@@ -358,8 +424,13 @@ async function fetchAndExtractImages(url, filter) {
           src = new URL(src, url).href;
         }
         
-        // Apply filter if provided
-        if (!filter || src.includes(filter)) {
+        // Apply text filter only if filter was not used as a selector
+        if (!isFilterSelector) {
+          if (!filter || src.includes(filter)) {
+            imageUrls.push(src);
+          }
+        } else {
+          // If using selector, include all images from container
           imageUrls.push(src);
         }
       }
@@ -447,7 +518,7 @@ async function downloadAndResizeImage(url) {
 }
 
 // Generate PDF from processed images
-async function generatePDF(images, partNumber) {
+async function generatePDF(images, partNumber, totalParts = 1) {
   const { jsPDF } = window.jspdf;
   
   if (!images || images.length === 0) {
@@ -493,9 +564,18 @@ async function generatePDF(images, partNumber) {
   
   // Save PDF
   const mangaTitle = mangaTitleInput.value.trim();
-  const fileName = mangaTitle 
-    ? `${mangaTitle}-part-${String(partNumber).padStart(2, '0')}.pdf`
-    : `manga-part-${String(partNumber).padStart(2, '0')}.pdf`;
+  let fileName;
+  
+  if (totalParts === 1) {
+    // Single part - no part number suffix
+    fileName = mangaTitle ? `${mangaTitle}.pdf` : `manga.pdf`;
+  } else {
+    // Multiple parts - add part number
+    fileName = mangaTitle 
+      ? `${mangaTitle}-part-${String(partNumber).padStart(2, '0')}.pdf`
+      : `manga-part-${String(partNumber).padStart(2, '0')}.pdf`;
+  }
+  
   pdf.save(fileName);
 }
 
