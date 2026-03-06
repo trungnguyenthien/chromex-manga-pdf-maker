@@ -337,9 +337,9 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
       
       allImages.push(...imageUrls);
       
-      // Add 0.5 second delay between chapter requests (except for the last one)
+      // Add 1 second delay between chapter requests (except for the last one)
       if (i < urls.length - 1) {
-        await delay(500); // 0.5 seconds
+        await delay(1000); // 1 second
       }
     }
     
