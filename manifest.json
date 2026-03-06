@@ -22,7 +22,8 @@
     "tabs",
     "scripting",
     "activeTab",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "cookies"
   ],
   "declarative_net_request": {
     "rule_resources": [

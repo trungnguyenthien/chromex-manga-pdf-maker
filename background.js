@@ -94,8 +94,56 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log('URL:', chapterUrl);
     console.log('Filter:', filter);
     
-    // Create new tab
-    chrome.tabs.create({ url: chapterUrl, active: false }, async (tab) => {
+    // Use async IIFE to clear cookies before creating tab
+    (async () => {
+      // Clear common session cookies for this domain before loading
+      try {
+        const url = new URL(chapterUrl);
+        const domain = url.hostname;
+        
+        // List of common session cookie names
+        const sessionCookieNames = [
+          'session_id',
+          'sessionid', 
+          'PHPSESSID',
+          'JSESSIONID',
+          'connect.sid',
+          'ASP.NET_SessionId',
+          'sid',
+          'sess',
+          '_session'
+        ];
+        
+        console.log('Clearing session cookies for domain:', domain);
+        let clearedCount = 0;
+        
+        for (const cookieName of sessionCookieNames) {
+          const cookie = await chrome.cookies.get({
+            url: chapterUrl,
+            name: cookieName
+          });
+          
+          if (cookie) {
+            await chrome.cookies.remove({
+              url: chapterUrl,
+              name: cookieName
+            });
+            console.log(`  ✓ Cleared: ${cookieName}`);
+            clearedCount++;
+          }
+        }
+        
+        if (clearedCount > 0) {
+          console.log(`✓ Total ${clearedCount} session cookie(s) cleared`);
+        } else {
+          console.log('No session cookies found');
+        }
+      } catch (error) {
+        console.warn('Failed to clear session cookies:', error.message);
+      }
+      
+      // Create new tab
+      chrome.tabs.create({ url: chapterUrl, active: false }, async (tab) => {
       try {
         const tabId = tab.id;
         
@@ -221,6 +269,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: false, error: error.message });
       }
     });
+    })(); // Close async IIFE
     
     return true; // Keep channel open for async response
   }
