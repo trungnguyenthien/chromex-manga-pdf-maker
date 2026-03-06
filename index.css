@@ -189,6 +189,13 @@ textarea:focus {
   flex: 1;
 }
 
+.image-count {
+  color: #4CAF50;
+  font-weight: bold;
+  font-size: 12px;
+  margin-left: 5px;
+}
+
 .remove-chapter-btn {
   background: #ff4444;
   color: white;

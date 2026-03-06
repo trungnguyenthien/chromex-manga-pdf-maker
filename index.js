@@ -10,6 +10,7 @@ const revertListBtn = document.getElementById('revertListBtn');
 // State
 let currentGroupBy = 2;
 let chapterUrls = [];
+let chapterImageCounts = {}; // Store image count for each chapter URL
 let hasReceivedPageInfo = false; // Flag to track first pageInfo
 let hasAutoReversed = false; // Flag to track if list was auto-reversed once
 
@@ -224,10 +225,12 @@ function updateChaptersList() {
         <div class="chapter-urls">
           ${part.map((url) => {
             const currentIndex = globalIndex++;
+            const imageCount = chapterImageCounts[url];
+            const imageCountText = imageCount !== undefined ? ` <span class="image-count">(${imageCount} images)</span>` : '';
             return `
               <div class="chapter-url-item">
                 <button class="remove-chapter-btn" data-index="${currentIndex}" title="Remove this chapter">&times;</button>
-                <div class="chapter-url">${url}</div>
+                <div class="chapter-url">${url}${imageCountText}</div>
               </div>
             `;
           }).join('')}
@@ -320,6 +323,9 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
       
       const imageUrls = await fetchAndExtractImages(chapterUrl, filter);
       
+      // Store image count for this chapter
+      chapterImageCounts[chapterUrl] = imageUrls.length;
+      
       // Log image URLs for this chapter
       console.log(`\n=== Chapter ${i + 1}/${totalChapters} ===`);
       console.log(`URL: ${chapterUrl}`);
@@ -331,9 +337,9 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
       
       allImages.push(...imageUrls);
       
-      // Add 1.5 second delay between chapter requests (except for the last one)
+      // Add 0.5 second delay between chapter requests (except for the last one)
       if (i < urls.length - 1) {
-        await delay(1500); // 1.5 seconds
+        await delay(500); // 0.5 seconds
       }
     }
     
@@ -375,7 +381,13 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
     await generatePDF(processedImages, partNumber, totalParts);
     
     updatePartProgress(partIndex, 100, 'Done!');
-    setTimeout(() => showPartProgress(partIndex, false), 1500);
+    
+    // Update chapters list to show image counts (after progress is done)
+    setTimeout(() => {
+      showPartProgress(partIndex, false);
+      updateChaptersList(); // Update to show image counts for next time
+      saveData(); // Save the image counts
+    }, 1500);
     
   } catch (error) {
     console.error('Error creating PDF:', error);
@@ -605,7 +617,8 @@ function saveData() {
     urlsChapter: urlsChapterTextarea.value,
     mangaTitle: mangaTitleInput.value,
     groupBy: currentGroupBy,
-    chapterUrls: chapterUrls
+    chapterUrls: chapterUrls,
+    chapterImageCounts: chapterImageCounts
   };
   
   localStorage.setItem('mangaPdfMakerData', JSON.stringify(data));
@@ -647,6 +660,11 @@ function loadSavedData() {
       } else {
         parseChapterUrls();
       }
+    }
+    
+    // Restore chapter image counts
+    if (data.chapterImageCounts) {
+      chapterImageCounts = data.chapterImageCounts;
     }
     
     // Restore GroupBy
