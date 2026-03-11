@@ -113,7 +113,11 @@
             let href = element.getAttribute('href');
             if (href) {
               // Convert relative URLs to absolute
-              if (href.startsWith('/')) {
+              if (href.startsWith('//')) {
+                // Protocol-relative URL
+                href = 'https:' + href;
+              } else if (href.startsWith('/')) {
+                // Relative path
                 href = baseUrl.replace(/\/$/, '') + href;
               } else if (!href.startsWith('http')) {
                 href = baseUrl.replace(/\/$/, '') + '/' + href;
@@ -127,7 +131,11 @@
               let href = anchor.getAttribute('href');
               if (href) {
                 // Convert relative URLs to absolute
-                if (href.startsWith('/')) {
+                if (href.startsWith('//')) {
+                  // Protocol-relative URL
+                  href = 'https:' + href;
+                } else if (href.startsWith('/')) {
+                  // Relative path
                   href = baseUrl.replace(/\/$/, '') + href;
                 } else if (!href.startsWith('http')) {
                   href = baseUrl.replace(/\/$/, '') + '/' + href;
