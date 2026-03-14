@@ -13,6 +13,7 @@ let chapterUrls = [];
 let chapterImageCounts = {}; // Store image count for each chapter URL
 let hasReceivedPageInfo = false; // Flag to track first pageInfo
 let hasAutoReversed = false; // Flag to track if list was auto-reversed once
+let currentPageUrl = ''; // Store current page URL
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -24,6 +25,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Handle page info from content script
     if (event.data.action === 'pageInfo') {
       console.log('Received page info:', event.data);
+      
+      // Save current page URL
+      currentPageUrl = event.data.url;
       
       // Auto-fill Base URL if not already set
       if (!baseUrlInput.value.trim() || baseUrlInput.value === 'https://comics.vn/') {
@@ -50,6 +54,12 @@ document.addEventListener('DOMContentLoaded', () => {
           selector: savedSelector,
           baseUrl: baseUrlInput.value.trim()
         }, '*');
+      } else if (!savedSelector) {
+        // If no selector/URLs provided, use current page as single chapter
+        console.log('No chapter URLs provided, using current page as single chapter');
+        chapterUrls = [currentPageUrl];
+        updateChaptersList();
+        saveData();
       }
     }
     
@@ -65,6 +75,12 @@ document.addEventListener('DOMContentLoaded', () => {
       chapterUrls = removeDuplicateUrls(event.data.urls);
       if (chapterUrls.length < event.data.urls.length) {
         console.log(`Removed ${event.data.urls.length - chapterUrls.length} duplicate URL(s). Final count: ${chapterUrls.length}`);
+      }
+      
+      // If no URLs found and we have current page, use it as single chapter
+      if (chapterUrls.length === 0 && currentPageUrl) {
+        console.log('No chapter URLs found with selector, using current page as single chapter');
+        chapterUrls = [currentPageUrl];
       }
       
       // Auto-reverse list once on first parse
@@ -127,7 +143,13 @@ function parseChapterUrls() {
   const baseUrl = baseUrlInput.value.trim();
   
   if (!htmlContent) {
-    chapterUrls = [];
+    // If empty, use current page as single chapter
+    if (currentPageUrl) {
+      console.log('No chapter URLs provided, using current page as single chapter');
+      chapterUrls = [currentPageUrl];
+    } else {
+      chapterUrls = [];
+    }
     updateChaptersList();
     saveData();
     return;
@@ -186,6 +208,12 @@ function parseChapterUrls() {
 
   // Remove duplicates
   chapterUrls = removeDuplicateUrls(chapterUrls);
+  
+  // If no URLs found and we have current page, use it as single chapter
+  if (chapterUrls.length === 0 && currentPageUrl) {
+    console.log('No chapter URLs parsed from HTML, using current page as single chapter');
+    chapterUrls = [currentPageUrl];
+  }
 
   // Auto-reverse list once on first parse
   if (!hasAutoReversed && chapterUrls.length > 0) {
