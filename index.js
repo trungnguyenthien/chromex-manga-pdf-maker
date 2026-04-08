@@ -737,38 +737,36 @@ async function generatePDF(images, partNumber, totalParts = 1) {
     pdf.addImage(img.data, 'JPEG', 0, 0, pageMmWidth, pageMmHeight, undefined, 'FAST');
   });
   
-  // Save PDF to Downloads/mangaTitle/ folder via offscreen document
+  // Save PDF to Downloads/ folder via native anchor click
   const mangaTitle = mangaTitleInput.value.trim();
+  const sanitize = (name) => name.replace(/[|/\\:*?"<>]/g, '_').trim();
+  const safeTitle = sanitize(mangaTitle);
   let filename;
 
   if (totalParts === 1) {
-    filename = mangaTitle ? `${mangaTitle}/${mangaTitle}.pdf` : `manga.pdf`;
+    filename = safeTitle ? `${safeTitle}.pdf` : `manga.pdf`;
   } else {
-    filename = mangaTitle
-      ? `${mangaTitle}/${mangaTitle}-part-${String(partNumber).padStart(2, '0')}.pdf`
+    filename = safeTitle
+      ? `${safeTitle}-part-${String(partNumber).padStart(2, '0')}.pdf`
       : `manga-part-${String(partNumber).padStart(2, '0')}.pdf`;
   }
 
   const pdfBlob = pdf.output('blob');
   const blobUrl = URL.createObjectURL(pdfBlob);
-  console.log(`[Download] PDF blob (${(pdfBlob.size / 1024 / 1024).toFixed(2)}MB), sending blob URL to background...`);
+  console.log(`[Download] PDF blob (${(pdfBlob.size / 1024 / 1024).toFixed(2)}MB), saving as ${filename}...`);
 
-  // Send only blob URL (~200 bytes, well under 64MB) to background → offscreen → chrome.downloads
-  chrome.runtime.sendMessage({
-    action: 'downloadPdf',
-    blobUrl: blobUrl,
-    filename: filename
-  }, (response) => {
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+  const anchor = document.createElement('a');
+  anchor.href = blobUrl;
+  anchor.download = filename;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
 
-    if (chrome.runtime.lastError) {
-      console.error('[Download] SW error:', chrome.runtime.lastError.message);
-    } else if (response && response.success) {
-      console.log(`[Download] ✓ Saved: ${filename}`);
-    } else {
-      console.error('[Download] Failed:', response ? response.error : 'unknown');
-    }
-  });
+  setTimeout(() => {
+    URL.revokeObjectURL(blobUrl);
+    console.log(`[Download] ✓ Download triggered: ${filename}`);
+  }, 3000);
 }
 
 // Inline progress helpers for each part

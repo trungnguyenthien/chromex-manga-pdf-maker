@@ -169,94 +169,120 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
 
         const loadTime = Date.now() - tabOpenTime;
-        console.log(`[${ts()}] Tab load complete (+${loadTime}ms) — waiting JS/lazy-load delay...`);
+        console.log(`[${ts()}] Tab load complete (+${loadTime}ms) — extracting images (max 2s)...`);
 
-        // Wait additional time for JavaScript to execute and images to lazy-load
-        const LOAD_DELAY = 200; // 200ms
-        const delayStart = Date.now();
-        await new Promise(resolve => setTimeout(resolve, LOAD_DELAY));
-        console.log(`[${ts()}] JS delay done (+${Date.now() - delayStart}ms) — extracting images...`);
-
+        // Inject async script: poll images for up to 2s, then extract
         const extractStart = Date.now();
 
-        // Inject script to extract image URLs
         const results = await chrome.scripting.executeScript({
           target: { tabId: tabId },
           func: (filterParam) => {
+            const MAX_WAIT = 2000;  // 2 seconds max
+            const CHECK_INTERVAL = 100; // poll every 100ms
+
             const currentUrl = window.location.href;
             const baseUrl = new URL(currentUrl);
 
-            // Check if filter is a CSS selector
-            let imagesToProcess;
-            let isFilterSelector = false;
+            // Helper: check if a src value is "loaded" (non-empty, not placeholder)
+            const isLoaded = (src) => {
+              if (!src || typeof src !== 'string' || src.trim() === '') return false;
+              // Skip obvious placeholder/loading patterns
+              const lower = src.toLowerCase();
+              if (lower.includes('loading') || lower.includes('placeholder') ||
+                  lower.includes('blank') || lower.endsWith('/blank') ||
+                  lower.endsWith('.gif') && lower.includes('1x1')) return false;
+              return true;
+            };
+
+            // Helper: resolve relative URL
+            const resolveUrl = (src) => {
+              if (src.startsWith('//')) return baseUrl.protocol + src;
+              if (src.startsWith('/')) return baseUrl.origin + src;
+              if (!src.startsWith('http')) {
+                try { return new URL(src, currentUrl).href; } catch (e) {}
+              }
+              return src;
+            };
+
+            // Determine which containers/images to track
+            let targetImages = null;
 
             if (filterParam && filterParam.trim()) {
               const trimmedFilter = filterParam.trim();
               const hasClassOrIdOrAttr = trimmedFilter.includes('.') ||
                                         trimmedFilter.includes('#') ||
                                         trimmedFilter.includes('[');
-              const hasUrlPattern = trimmedFilter.includes('http') ||
-                                   trimmedFilter.includes('cdn') ||
-                                   trimmedFilter.includes('.jpg') ||
-                                   trimmedFilter.includes('.png') ||
-                                   trimmedFilter.includes('.webp') ||
-                                   trimmedFilter.includes('.gif');
-
+              const hasUrlPattern = /http|cdn|\.(jpg|png|webp|gif)/i.test(trimmedFilter);
               const looksLikeSelector = hasClassOrIdOrAttr && !hasUrlPattern;
 
               if (looksLikeSelector) {
-                // Try to use filter as CSS selector
                 try {
                   const containers = document.querySelectorAll(trimmedFilter);
                   if (containers.length > 0) {
-                    isFilterSelector = true;
-                    const allImagesInContainers = [];
-                    containers.forEach(container => {
-                      const imgsInContainer = container.querySelectorAll('img');
-                      allImagesInContainers.push(...imgsInContainer);
+                    targetImages = [];
+                    containers.forEach(c => {
+                      targetImages.push(...Array.from(c.querySelectorAll('img')));
                     });
-                    imagesToProcess = allImagesInContainers;
                   }
-                } catch (e) {
-                  // Invalid selector, fall back to all images
-                  console.warn('Invalid CSS selector, using all images');
-                }
+                } catch (e) {}
               }
             }
 
-            // If no selector or selector didn't work, get all images
-            if (!imagesToProcess) {
-              imagesToProcess = document.querySelectorAll('img');
+            if (!targetImages) {
+              targetImages = Array.from(document.querySelectorAll('img'));
             }
 
-            const imageUrls = [];
+            return new Promise((resolve) => {
+              const startTime = Date.now();
 
-            imagesToProcess.forEach(img => {
-              let src = img.getAttribute('src') ||
-                       img.getAttribute('data-src') ||
-                       img.getAttribute('data-original') ||
-                       img.getAttribute('data-lazy-src') ||
-                       img.currentSrc;
+              const tryExtract = () => {
+                const elapsed = Date.now() - startTime;
 
-              if (src) {
-                // Convert relative URLs to absolute
-                if (src.startsWith('//')) {
-                  src = baseUrl.protocol + src;
-                } else if (src.startsWith('/')) {
-                  src = baseUrl.origin + src;
-                } else if (!src.startsWith('http')) {
-                  try {
-                    src = new URL(src, currentUrl).href;
-                  } catch (e) {
-                    console.warn('Failed to parse URL:', src);
-                  }
+                if (elapsed >= MAX_WAIT) {
+                  // Timeout — extract whatever we have now
+                  const imageUrls = targetImages.map(img => {
+                    const src = img.getAttribute('src') ||
+                                img.getAttribute('data-src') ||
+                                img.getAttribute('data-original') ||
+                                img.getAttribute('data-lazy-src');
+                    return isLoaded(src) ? resolveUrl(src) : null;
+                  }).filter(Boolean);
+
+                  console.log(`[TabExtract] Timeout after ${elapsed}ms, found ${imageUrls.length} images`);
+                  resolve({ urls: imageUrls, pageUrl: currentUrl, timedOut: true });
+                  return;
                 }
 
-                imageUrls.push(src);
-              }
+                // Check if all images have loaded src
+                const allLoaded = targetImages.every(img => {
+                  const src = img.getAttribute('src') ||
+                              img.getAttribute('data-src') ||
+                              img.getAttribute('data-original') ||
+                              img.getAttribute('data-lazy-src');
+                  return isLoaded(src);
+                });
+
+                if (allLoaded && targetImages.length > 0) {
+                  const elapsed = Date.now() - startTime;
+                  const imageUrls = targetImages.map(img => {
+                    const src = img.getAttribute('src') ||
+                                img.getAttribute('data-src') ||
+                                img.getAttribute('data-original') ||
+                                img.getAttribute('data-lazy-src');
+                    return resolveUrl(src);
+                  }).filter(Boolean);
+
+                  console.log(`[TabExtract] All ${imageUrls.length} images loaded in ${elapsed}ms`);
+                  resolve({ urls: imageUrls, pageUrl: currentUrl, timedOut: false });
+                  return;
+                }
+
+                // Not ready yet — check again soon
+                setTimeout(tryExtract, CHECK_INTERVAL);
+              };
+
+              tryExtract();
             });
-
-            return { urls: imageUrls, pageUrl: currentUrl };
           },
           args: [filter]
         });
@@ -264,12 +290,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const extractTime = Date.now() - extractStart;
         const totalTime = Date.now() - tabOpenTime;
 
-        console.log(`[${ts()}] Images extracted (+${extractTime}ms) — closing tab (id=${tabId})...`);
+        const imageData = results[0].result;
+        const timeoutNote = imageData.timedOut ? ' (forced after 2s)' : '';
+        console.log(`[${ts()}] Extracted ${imageData.urls.length} images (+${extractTime}ms)${timeoutNote} — closing tab (id=${tabId})...`);
 
         // Close the tab
         chrome.tabs.remove(tabId);
 
-        const imageData = results[0].result;
         console.log(`[${ts()}] ✓ Tab closed. Total chapter time: +${totalTime}ms | ${imageData.urls.length} images`);
         console.log('===================================\n');
 
@@ -359,34 +386,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     
     // Return true to indicate we'll send response asynchronously
-    return true;
-  }
-
-  // downloadPdf: create offscreen doc, forward blob URL so it can fetch + chrome.downloads.download
-  if (request.action === 'downloadPdf') {
-    const { blobUrl, filename } = request;
-    console.log(`[Download] Requesting offscreen for: ${filename}`);
-
-    // Ensure offscreen document exists (Chrome 116+)
-    chrome.offscreen.createDocument({
-      url: 'offscreen.html',
-      reasons: ['DOWNLOADS'],
-      justification: 'Download PDF to subfolder in Downloads/'
-    }).then(() => {
-      // Forward blob URL (tiny message, ~200 bytes) to offscreen
-      chrome.runtime.sendMessage({
-        target: 'offscreen',
-        action: 'downloadPdf',
-        blobUrl: blobUrl,
-        filename: filename
-      }, (response) => {
-        sendResponse(response || { success: false, error: chrome.runtime.lastError?.message });
-      });
-    }).catch((err) => {
-      console.error('[Download] Offscreen createDocument failed:', err.message);
-      sendResponse({ success: false, error: err.message });
-    });
-
     return true;
   }
 });

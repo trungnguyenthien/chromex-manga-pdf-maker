@@ -1,40 +1,32 @@
-// Offscreen document — handles downloads with full DOM APIs (chrome.downloads available)
+// Offscreen document — handles PDF download with chrome.downloads + URL.createObjectURL
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action !== 'downloadPdf') return;
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'offscreen-dl') return;
 
-  const { blobUrl, filename } = message;
-  console.log(`[Offscreen] Downloading: ${filename}`);
+  console.log('[Offscreen] Port connected');
 
-  // Convert blob URL to Blob (available in this DOM context)
-  fetch(blobUrl)
-    .then((res) => res.blob())
-    .then((blob) => {
-      console.log(`[Offscreen] Blob fetched (${(blob.size / 1024 / 1024).toFixed(2)}MB)`);
+  port.onMessage.addListener((msg) => {
+    if (msg.type !== 'downloadPdf') return;
 
-      // createObjectURL is available here (DOM context)
-      const localUrl = URL.createObjectURL(blob);
+    const { filename, buffer } = msg;
+    console.log(`[Offscreen] Received PDF (${(buffer.byteLength / 1024 / 1024).toFixed(2)}MB), downloading...`);
 
-      chrome.downloads.download({
-        url: localUrl,
-        filename: filename,
-        saveAs: false
-      }, (downloadId) => {
-        if (chrome.runtime.lastError) {
-          console.error('[Offscreen] Download error:', chrome.runtime.lastError.message);
-          sendResponse({ success: false, error: chrome.runtime.lastError.message });
-        } else {
-          console.log(`[Offscreen] ✓ Saved: ${filename} (id=${downloadId})`);
-          sendResponse({ success: true, downloadId: downloadId });
-        }
-        // Revoke after delay to let download start
-        setTimeout(() => URL.revokeObjectURL(localUrl), 20000);
-      });
-    })
-    .catch((err) => {
-      console.error('[Offscreen] Error:', err);
-      sendResponse({ success: false, error: err.message });
+    const blob = new Blob([buffer], { type: 'application/pdf' });
+    const blobUrl = URL.createObjectURL(blob);
+
+    chrome.downloads.download({
+      url: blobUrl,
+      filename: filename,
+      saveAs: false
+    }, (downloadId) => {
+      if (chrome.runtime.lastError) {
+        console.error('[Offscreen] Error:', chrome.runtime.lastError.message);
+        port.postMessage({ success: false, error: chrome.runtime.lastError.message });
+      } else {
+        console.log(`[Offscreen] ✓ Saved: ${filename} (id=${downloadId})`);
+        port.postMessage({ success: true });
+      }
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
     });
-
-  return true; // async response
+  });
 });
