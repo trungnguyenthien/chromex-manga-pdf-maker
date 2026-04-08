@@ -494,37 +494,52 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
       console.log(`==================\n`);
       
       allImages.push(...imageUrls);
-      
+
       // Add 1 second delay between chapter requests (except for the last one)
       if (i < urls.length - 1) {
         await delay(1000); // 1 second
       }
     }
-    
+
     if (allImages.length === 0) {
       updatePartProgress(partIndex, 0, 'No images found!');
       setTimeout(() => showPartProgress(partIndex, false), 2000);
       return;
     }
-    
-    updatePartProgress(partIndex, 5, `Found ${allImages.length} images. Processing...`);
+
+    // Deduplicate: remove repeated URLs (ads, shared images across chapters)
+    const originalCount = allImages.length;
+    const uniqueImageMap = new Map();
+    allImages.forEach(url => {
+      if (!uniqueImageMap.has(url)) {
+        uniqueImageMap.set(url, true);
+      }
+    });
+    const deduplicatedImages = Array.from(uniqueImageMap.keys());
+    const removedCount = originalCount - deduplicatedImages.length;
+
+    if (removedCount > 0) {
+      console.log(`[AdFilter] Removed ${removedCount} duplicate/ad images (${originalCount} → ${deduplicatedImages.length})`);
+    }
+
+    updatePartProgress(partIndex, 5, `Found ${deduplicatedImages.length} images${removedCount > 0 ? ` (${removedCount} duplicates removed)` : ''}. Processing...`);
     
     // Step 2: Download and resize images (5-97%, 92% total)
     const processedImages = [];
-    for (let i = 0; i < allImages.length; i++) {
+    for (let i = 0; i < deduplicatedImages.length; i++) {
       updatePartProgress(
         partIndex,
-        5 + ((i / allImages.length) * 92),
-        `Download image ${i + 1}/${allImages.length}...`
+        5 + ((i / deduplicatedImages.length) * 92),
+        `Download image ${i + 1}/${deduplicatedImages.length}...`
       );
       
       try {
-        const imgData = await downloadAndResizeImage(allImages[i]);
+        const imgData = await downloadAndResizeImage(deduplicatedImages[i]);
         if (imgData) {
           processedImages.push(imgData);
         }
       } catch (error) {
-        console.error(`Failed to process image ${allImages[i]}:`, error);
+        console.error(`Failed to process image ${deduplicatedImages[i]}:`, error);
       }
     }
     
@@ -604,7 +619,7 @@ async function fetchAndExtractImages(url, filter) {
   }
 }
 
-// Download image and resize to 1000px width
+// Download image and resize to 800px width
 async function downloadAndResizeImage(url) {
   try {
     // Use background script to fetch image (bypasses CORS, Referer set by declarativeNetRequest)
@@ -631,8 +646,8 @@ async function downloadAndResizeImage(url) {
           const originalWidth = img.width;
           const originalHeight = img.height;
           
-          // Always resize to 1000px width
-          const targetWidth = 1000;
+          // Always resize to 800px width
+          const targetWidth = 800;
           const aspectRatio = originalHeight / originalWidth;
           const newWidth = targetWidth;
           const newHeight = Math.round(targetWidth * aspectRatio);
@@ -722,21 +737,36 @@ async function generatePDF(images, partNumber, totalParts = 1) {
     pdf.addImage(img.data, 'JPEG', 0, 0, pageMmWidth, pageMmHeight, undefined, 'FAST');
   });
   
-  // Save PDF
+  // Save PDF to Downloads/mangaTitle/ folder using native anchor click
+  // Chrome automatically creates subdirectories if filename contains "/"
   const mangaTitle = mangaTitleInput.value.trim();
-  let fileName;
-  
+  let filename;
+
   if (totalParts === 1) {
-    // Single part - no part number suffix
-    fileName = mangaTitle ? `${mangaTitle}.pdf` : `manga.pdf`;
+    filename = mangaTitle ? `${mangaTitle}/${mangaTitle}.pdf` : `manga.pdf`;
   } else {
-    // Multiple parts - add part number
-    fileName = mangaTitle 
-      ? `${mangaTitle}-part-${String(partNumber).padStart(2, '0')}.pdf`
+    filename = mangaTitle
+      ? `${mangaTitle}/${mangaTitle}-part-${String(partNumber).padStart(2, '0')}.pdf`
       : `manga-part-${String(partNumber).padStart(2, '0')}.pdf`;
   }
-  
-  pdf.save(fileName);
+
+  const pdfBlob = pdf.output('blob');
+  const blobUrl = URL.createObjectURL(pdfBlob);
+  console.log(`[Download] PDF blob (${(pdfBlob.size / 1024 / 1024).toFixed(2)}MB), saving as ${filename}...`);
+
+  const anchor = document.createElement('a');
+  anchor.href = blobUrl;
+  anchor.download = filename;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+
+  // Revoke after delay to allow download to start
+  setTimeout(() => {
+    URL.revokeObjectURL(blobUrl);
+    console.log(`[Download] ✓ Saved: ${filename}`);
+  }, 2000);
 }
 
 // Inline progress helpers for each part

@@ -1,3 +1,9 @@
+// Helper: timestamp string like [HH:MM:SS.mmm]
+function ts() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}.${String(d.getMilliseconds()).padStart(3,'0')}`;
+}
+
 // Background service worker for Chrome Extension v3
 // Injects content script into current tab when extension icon is clicked
 
@@ -143,10 +149,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
       
       // Create new tab
+      console.log(`[${ts()} →] Opening tab: ${chapterUrl}`);
       chrome.tabs.create({ url: chapterUrl, active: false }, async (tab) => {
       try {
         const tabId = tab.id;
-        
+        const tabOpenTime = Date.now();
+
+        console.log(`[${ts()}] Tab created (id=${tabId}), waiting for load...`);
+
         // Wait for tab to finish loading
         await new Promise((resolve) => {
           const listener = (changedTabId, changeInfo) => {
@@ -157,39 +167,43 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           };
           chrome.tabs.onUpdated.addListener(listener);
         });
-        
+
+        const loadTime = Date.now() - tabOpenTime;
+        console.log(`[${ts()}] Tab load complete (+${loadTime}ms) — waiting JS/lazy-load delay...`);
+
         // Wait additional time for JavaScript to execute and images to lazy-load
-        // Adjust this delay if needed (in milliseconds)
-        const LOAD_DELAY = 1000; // 1 second
+        const LOAD_DELAY = 200; // 200ms
+        const delayStart = Date.now();
         await new Promise(resolve => setTimeout(resolve, LOAD_DELAY));
-        
-        console.log('Tab loaded, extracting images...');
-        
+        console.log(`[${ts()}] JS delay done (+${Date.now() - delayStart}ms) — extracting images...`);
+
+        const extractStart = Date.now();
+
         // Inject script to extract image URLs
         const results = await chrome.scripting.executeScript({
           target: { tabId: tabId },
           func: (filterParam) => {
             const currentUrl = window.location.href;
             const baseUrl = new URL(currentUrl);
-            
+
             // Check if filter is a CSS selector
             let imagesToProcess;
             let isFilterSelector = false;
-            
+
             if (filterParam && filterParam.trim()) {
               const trimmedFilter = filterParam.trim();
-              const hasClassOrIdOrAttr = trimmedFilter.includes('.') || 
-                                        trimmedFilter.includes('#') || 
+              const hasClassOrIdOrAttr = trimmedFilter.includes('.') ||
+                                        trimmedFilter.includes('#') ||
                                         trimmedFilter.includes('[');
-              const hasUrlPattern = trimmedFilter.includes('http') || 
+              const hasUrlPattern = trimmedFilter.includes('http') ||
                                    trimmedFilter.includes('cdn') ||
                                    trimmedFilter.includes('.jpg') ||
                                    trimmedFilter.includes('.png') ||
                                    trimmedFilter.includes('.webp') ||
                                    trimmedFilter.includes('.gif');
-              
+
               const looksLikeSelector = hasClassOrIdOrAttr && !hasUrlPattern;
-              
+
               if (looksLikeSelector) {
                 // Try to use filter as CSS selector
                 try {
@@ -209,21 +223,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 }
               }
             }
-            
+
             // If no selector or selector didn't work, get all images
             if (!imagesToProcess) {
               imagesToProcess = document.querySelectorAll('img');
             }
-            
+
             const imageUrls = [];
-            
+
             imagesToProcess.forEach(img => {
-              let src = img.getAttribute('src') || 
-                       img.getAttribute('data-src') || 
+              let src = img.getAttribute('src') ||
+                       img.getAttribute('data-src') ||
                        img.getAttribute('data-original') ||
                        img.getAttribute('data-lazy-src') ||
                        img.currentSrc;
-              
+
               if (src) {
                 // Convert relative URLs to absolute
                 if (src.startsWith('//')) {
@@ -237,29 +251,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     console.warn('Failed to parse URL:', src);
                   }
                 }
-                
+
                 imageUrls.push(src);
               }
             });
-            
+
             return { urls: imageUrls, pageUrl: currentUrl };
           },
           args: [filter]
         });
-        
+
+        const extractTime = Date.now() - extractStart;
+        const totalTime = Date.now() - tabOpenTime;
+
+        console.log(`[${ts()}] Images extracted (+${extractTime}ms) — closing tab (id=${tabId})...`);
+
         // Close the tab
         chrome.tabs.remove(tabId);
-        
+
         const imageData = results[0].result;
-        console.log(`✓ Extracted ${imageData.urls.length} images`);
+        console.log(`[${ts()}] ✓ Tab closed. Total chapter time: +${totalTime}ms | ${imageData.urls.length} images`);
         console.log('===================================\n');
-        
-        sendResponse({ 
-          success: true, 
+
+        sendResponse({
+          success: true,
           imageUrls: imageData.urls,
           pageUrl: imageData.pageUrl
         });
-        
+
       } catch (error) {
         console.error('✗ Error extracting images:', error);
         // Try to close tab if it exists
@@ -342,4 +361,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Return true to indicate we'll send response asynchronously
     return true;
   }
+
+  // Removed: blob URL transfer approach was over-engineered.
+  // Download is handled directly in the tab via URL.createObjectURL + <a> click.
+  // See generatePDF() in index.js for the current download implementation.
 });

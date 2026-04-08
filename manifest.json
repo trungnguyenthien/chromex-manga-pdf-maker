@@ -23,7 +23,8 @@
     "scripting",
     "activeTab",
     "declarativeNetRequest",
-    "cookies"
+    "cookies",
+    "downloads"
   ],
   "declarative_net_request": {
     "rule_resources": [
@@ -43,7 +44,9 @@
         "index.html",
         "index.css",
         "index.js",
-        "lib/jspdf.umd.min.js"
+        "lib/jspdf.umd.min.js",
+        "offscreen.html",
+        "offscreen.js"
       ],
       "matches": ["<all_urls>"]
     }
