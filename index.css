@@ -58,6 +58,23 @@ input[type="text"]:focus {
   border-color: #4CAF50;
 }
 
+input[type="number"] {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+input[type="number"]:focus {
+  outline: none;
+  border-color: #4CAF50;
+}
+
+.num-parts-input {
+  margin-top: 4px;
+}
+
 .groupby-options {
   display: flex;
   gap: 8px;
@@ -251,4 +268,72 @@ textarea:focus {
   font-size: 12px;
   color: #666;
   font-weight: 500;
+}
+
+/* Parts Summary */
+.parts-summary-box {
+  background: #f0f8ff;
+  border: 1px solid #b0d4f1;
+  border-radius: 8px;
+  padding: 12px 15px;
+  margin-bottom: 15px;
+  font-size: 13px;
+}
+
+.summary-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.summary-row + .summary-row {
+  margin-top: 8px;
+}
+
+.summary-label {
+  font-weight: bold;
+  color: #555;
+  min-width: 70px;
+  flex-shrink: 0;
+}
+
+.summary-value {
+  color: #333;
+}
+
+.summary-breakdown {
+  color: #666;
+  font-size: 12px;
+}
+
+.summary-rec {
+  align-items: center;
+}
+
+.rec-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rec-chip {
+  background: #fff;
+  border: 1px solid #4CAF50;
+  color: #2e7d32;
+  border-radius: 16px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.rec-chip:hover {
+  background: #4CAF50;
+  color: white;
+}
+
+.rec-note {
+  color: #888;
+  font-size: 11px;
 }

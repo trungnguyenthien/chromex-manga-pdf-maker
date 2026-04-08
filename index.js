@@ -6,9 +6,11 @@ const mangaTitleInput = document.getElementById('mangaTitle');
 const chaptersList = document.getElementById('chaptersList');
 const groupByButtons = document.querySelectorAll('.groupby-btn');
 const revertListBtn = document.getElementById('revertListBtn');
+const numPartsInput = document.getElementById('numParts');
 
 // State
 let currentGroupBy = 2;
+let numParts = null; // null means "use currentGroupBy", number means "divide evenly"
 let chapterUrls = [];
 let chapterImageCounts = {}; // Store image count for each chapter URL
 let hasReceivedPageInfo = false; // Flag to track first pageInfo
@@ -104,6 +106,9 @@ function setupEventListeners() {
       groupByButtons.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       currentGroupBy = btn.dataset.value === 'all' ? 'all' : parseInt(btn.dataset.value);
+      // Clear numParts when switching to groupBy buttons
+      numParts = null;
+      numPartsInput.value = '';
       saveData();
       updateChaptersList();
     });
@@ -134,6 +139,14 @@ function setupEventListeners() {
     chapterUrls.reverse();
     updateChaptersList();
     saveData();
+  });
+
+  // NumParts input
+  numPartsInput.addEventListener('input', () => {
+    const val = parseInt(numPartsInput.value.trim());
+    numParts = (isNaN(val) || val < 1) ? null : val;
+    saveData();
+    updateChaptersList();
   });
 }
 
@@ -231,22 +244,100 @@ function removeDuplicateUrls(urls) {
   return [...new Set(urls)];
 }
 
+// Render parts summary (total chapters + recommended part suggestions)
+function renderPartsSummary(parts) {
+  const total = chapterUrls.length;
+  const partsSummary = document.getElementById('partsSummary');
+
+  // Compute recommended part counts where the last part equals or is 1 chapter shorter
+  // Strategy: try divisors of total, then total-1, total-2, ...
+  const recommendations = [];
+  const tried = new Set();
+
+  // Priority 1: exact divisors (last part == others)
+  for (let p = 2; p <= Math.min(total, 10); p++) {
+    if (total % p === 0 && !tried.has(p)) {
+      recommendations.push({ parts: p, chaptersEach: total / p, note: 'perfectly even' });
+      tried.add(p);
+    }
+  }
+
+  // Priority 2: near-even (last part ≤ others by exactly 1)
+  for (let extra = 1; extra <= total && recommendations.length < 5; extra++) {
+    const t = total - extra;
+    for (let p = 2; p <= Math.min(t, 10); p++) {
+      if (t % p === 0 && !tried.has(p)) {
+        const base = t / p;
+        recommendations.push({ parts: p, chaptersEach: base, extra: extra, note: `last part has ${base - 1}` });
+        tried.add(p);
+      }
+    }
+  }
+
+  const partsInfo = parts.map((p, i) => {
+    const isLast = i === parts.length - 1;
+    const label = isLast ? ' (last)' : '';
+    return `Part ${i + 1}: ${p.length} chap${label}`;
+  }).join(' &nbsp;|&nbsp; ');
+
+  let html = `<div class="parts-summary-box">
+    <div class="summary-row">
+      <span class="summary-label">Total:</span>
+      <span class="summary-value">${total} chapters &nbsp;|&nbsp; ${parts.length} parts</span>
+    </div>
+    <div class="summary-row summary-breakdown">${partsInfo}</div>`;
+
+  if (recommendations.length > 0) {
+    const suggestionItems = recommendations.slice(0, 5).map(r => {
+      let label = `${r.parts} parts × ${r.chaptersEach} chap`;
+      if (r.extra) label += ` <span class="rec-note">(${r.note})</span>`;
+      return `<span class="rec-chip" data-parts="${r.parts}">${label}</span>`;
+    }).join('');
+
+    html += `<div class="summary-row summary-rec">
+      <span class="summary-label">Suggested:</span>
+      <div class="rec-chips">${suggestionItems}</div>
+    </div>`;
+  }
+
+  html += '</div>';
+  partsSummary.innerHTML = html;
+
+  // Wire up clickable suggestion chips
+  partsSummary.querySelectorAll('.rec-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const p = parseInt(chip.dataset.parts);
+      numParts = p;
+      numPartsInput.value = p;
+      groupByButtons.forEach(b => b.classList.remove('active'));
+      saveData();
+      updateChaptersList();
+    });
+  });
+}
+
 // Update chapters list display
 function updateChaptersList() {
   if (chapterUrls.length === 0) {
     chaptersList.innerHTML = '<div class="empty-message">No chapters yet. Paste HTML with links in the URL\'s chapters field.</div>';
+    document.getElementById('partsSummary').innerHTML = '';
     return;
   }
 
-  const parts = groupChapters(chapterUrls, currentGroupBy);
-  
+  const parts = groupChapters(chapterUrls, currentGroupBy, numParts);
+
+  // Render parts summary
+  renderPartsSummary(parts);
+
   let globalIndex = 0; // Track global index across all parts
-  
+
   chaptersList.innerHTML = parts.map((part, partIndex) => {
+    const isLastPart = partIndex === parts.length - 1;
+    const chapCountLabel = isLastPart ? `${part.length} chap (last)` : `${part.length} chap`;
     return `
       <div class="chapter-part" id="part-${partIndex}">
         <div class="chapter-part-header">
-          <button class="make-part-btn" data-part="${partIndex}">Make Part ${partIndex + 1}</button>
+          <button class="make-part-btn" data-part="${partIndex}">Make Part ${partIndex + 1} — ${chapCountLabel}</button>
           <div class="part-progress" style="display: none;">
             <div class="progress-bar-inline">
               <div class="progress-fill-inline"></div>
@@ -279,7 +370,7 @@ function updateChaptersList() {
       makePart(parts[partIndex], partIndex + 1, partIndex, baseUrl, parts.length);
     });
   });
-  
+
   // Add event listeners to "Remove Chapter" buttons
   document.querySelectorAll('.remove-chapter-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -303,17 +394,52 @@ function removeChapterUrl(index) {
   }
 }
 
-// Group chapters based on groupBy value
-function groupChapters(urls, groupBy) {
+// Group chapters based on groupBy value or numParts value
+function groupChapters(urls, groupBy, numParts) {
   if (groupBy === 'all') {
     return [urls];
   }
 
+  // If numParts is set, divide chapters evenly across that many parts
+  if (numParts !== null && numParts > 0) {
+    return groupChaptersEvenly(urls, numParts);
+  }
+
+  // Otherwise, use the classic groupBy (chapters per part)
   const parts = [];
   for (let i = 0; i < urls.length; i += groupBy) {
     parts.push(urls.slice(i, i + groupBy));
   }
   return parts;
+}
+
+// Divide chapters as evenly as possible across numParts parts
+// Last part equals or is 1 chapter shorter than others
+// (extra chapters go to FIRST parts so the last part stays smaller/equal)
+function groupChaptersEvenly(urls, numParts) {
+  const total = urls.length;
+  const parts = Math.min(Math.max(1, numParts), total);
+
+  // base = floor, remainder = how many chapters are "left over" after equal split
+  const base = Math.floor(total / parts);
+  const remainder = total % parts;
+  // => total = base * parts + remainder
+
+  // FIRST (remainder) parts get (base + 1) chapters
+  // LAST (parts - remainder) parts get base chapters
+  // => Last part always gets base, which is <= any +1 part
+
+  const result = [];
+  let index = 0;
+
+  for (let i = 0; i < parts; i++) {
+    // Put +1 on the FIRST parts so the last part stays at base (smallest)
+    const count = i < remainder ? base + 1 : base;
+    result.push(urls.slice(index, index + count));
+    index += count;
+  }
+
+  return result;
 }
 
 // Helper function to add delay between requests
@@ -478,7 +604,7 @@ async function fetchAndExtractImages(url, filter) {
   }
 }
 
-// Download image and resize to 700px width
+// Download image and resize to 1000px width
 async function downloadAndResizeImage(url) {
   try {
     // Use background script to fetch image (bypasses CORS, Referer set by declarativeNetRequest)
@@ -505,8 +631,8 @@ async function downloadAndResizeImage(url) {
           const originalWidth = img.width;
           const originalHeight = img.height;
           
-          // Always resize to 700px width
-          const targetWidth = 700;
+          // Always resize to 1000px width
+          const targetWidth = 1000;
           const aspectRatio = originalHeight / originalWidth;
           const newWidth = targetWidth;
           const newHeight = Math.round(targetWidth * aspectRatio);
@@ -526,7 +652,7 @@ async function downloadAndResizeImage(url) {
           ctx.drawImage(img, 0, 0, newWidth, newHeight);
           
           // Get image data
-          const imageData = canvas.toDataURL('image/jpeg', 0.9);
+          const imageData = canvas.toDataURL('image/jpeg', 0.95);
           
           resolve({
             data: imageData,
@@ -649,6 +775,7 @@ function saveData() {
     urlsChapter: urlsChapterTextarea.value,
     mangaTitle: mangaTitleInput.value,
     groupBy: currentGroupBy,
+    numParts: numParts,
     chapterUrls: chapterUrls,
     chapterImageCounts: chapterImageCounts
   };
@@ -702,7 +829,15 @@ function loadSavedData() {
     // Restore GroupBy
     if (data.groupBy !== undefined) {
       currentGroupBy = data.groupBy;
-      
+    }
+
+    // Restore NumParts
+    if (data.numParts !== undefined && data.numParts !== null) {
+      numParts = data.numParts;
+      numPartsInput.value = numParts;
+      // Deactivate all groupBy buttons when numParts is set
+      groupByButtons.forEach(btn => btn.classList.remove('active'));
+    } else {
       // Update active button
       groupByButtons.forEach(btn => {
         const btnValue = btn.dataset.value === 'all' ? 'all' : parseInt(btn.dataset.value);

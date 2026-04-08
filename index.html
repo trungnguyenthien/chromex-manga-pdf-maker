@@ -31,6 +31,11 @@
       </div>
 
       <div class="form-group">
+        <label for="numParts">Or specify number of parts</label>
+        <input type="number" id="numParts" min="1" max="100" placeholder="e.g., 3" class="num-parts-input">
+      </div>
+
+      <div class="form-group">
         <label for="urlsChapter">URL's chapters</label>
         <textarea id="urlsChapter" rows="15" placeholder="Paste HTML with <a> tags here, or enter CSS selector (e.g., a.chapter-link)"></textarea>
       </div>
@@ -46,6 +51,7 @@
         <h3>Chapters</h3>
         <button id="revertListBtn" class="revert-btn">Revert List</button>
       </div>
+      <div id="partsSummary"></div>
       <div id="chaptersList"></div>
     </div>
   </div>

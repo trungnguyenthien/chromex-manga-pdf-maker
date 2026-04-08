@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check \"/Users/trungnguyen/iCloud Drive \\(Archive\\)/Documents/DocumentsTrungNguyen/Github/chromex-manga-pdf-maker/index.js\")"
+    ]
+  }
+}
