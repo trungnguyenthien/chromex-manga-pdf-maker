@@ -667,7 +667,7 @@ async function downloadAndResizeImage(url) {
           ctx.drawImage(img, 0, 0, newWidth, newHeight);
           
           // Get image data
-          const imageData = canvas.toDataURL('image/jpeg', 0.95);
+          const imageData = canvas.toDataURL('image/jpeg', 1);
           
           resolve({
             data: imageData,
@@ -737,8 +737,7 @@ async function generatePDF(images, partNumber, totalParts = 1) {
     pdf.addImage(img.data, 'JPEG', 0, 0, pageMmWidth, pageMmHeight, undefined, 'FAST');
   });
   
-  // Save PDF to Downloads/mangaTitle/ folder using native anchor click
-  // Chrome automatically creates subdirectories if filename contains "/"
+  // Save PDF to Downloads/mangaTitle/ folder via offscreen document
   const mangaTitle = mangaTitleInput.value.trim();
   let filename;
 
@@ -752,21 +751,24 @@ async function generatePDF(images, partNumber, totalParts = 1) {
 
   const pdfBlob = pdf.output('blob');
   const blobUrl = URL.createObjectURL(pdfBlob);
-  console.log(`[Download] PDF blob (${(pdfBlob.size / 1024 / 1024).toFixed(2)}MB), saving as ${filename}...`);
+  console.log(`[Download] PDF blob (${(pdfBlob.size / 1024 / 1024).toFixed(2)}MB), sending blob URL to background...`);
 
-  const anchor = document.createElement('a');
-  anchor.href = blobUrl;
-  anchor.download = filename;
-  anchor.style.display = 'none';
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
+  // Send only blob URL (~200 bytes, well under 64MB) to background → offscreen → chrome.downloads
+  chrome.runtime.sendMessage({
+    action: 'downloadPdf',
+    blobUrl: blobUrl,
+    filename: filename
+  }, (response) => {
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
 
-  // Revoke after delay to allow download to start
-  setTimeout(() => {
-    URL.revokeObjectURL(blobUrl);
-    console.log(`[Download] ✓ Saved: ${filename}`);
-  }, 2000);
+    if (chrome.runtime.lastError) {
+      console.error('[Download] SW error:', chrome.runtime.lastError.message);
+    } else if (response && response.success) {
+      console.log(`[Download] ✓ Saved: ${filename}`);
+    } else {
+      console.error('[Download] Failed:', response ? response.error : 'unknown');
+    }
+  });
 }
 
 // Inline progress helpers for each part

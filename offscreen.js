@@ -3,18 +3,20 @@
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action !== 'downloadPdf') return;
 
-  const { dataUrl, filename } = message;
+  const { blobUrl, filename } = message;
+  console.log(`[Offscreen] Downloading: ${filename}`);
 
-  console.log(`[Offscreen] Received PDF (${(dataUrl.length / 1024 / 1024).toFixed(2)}MB), downloading...`);
-
-  // Convert data URL to Blob and use createObjectURL (available in this context)
-  fetch(dataUrl)
+  // Convert blob URL to Blob (available in this DOM context)
+  fetch(blobUrl)
     .then((res) => res.blob())
     .then((blob) => {
-      const blobUrl = URL.createObjectURL(blob);
+      console.log(`[Offscreen] Blob fetched (${(blob.size / 1024 / 1024).toFixed(2)}MB)`);
+
+      // createObjectURL is available here (DOM context)
+      const localUrl = URL.createObjectURL(blob);
 
       chrome.downloads.download({
-        url: blobUrl,
+        url: localUrl,
         filename: filename,
         saveAs: false
       }, (downloadId) => {
@@ -25,8 +27,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           console.log(`[Offscreen] ✓ Saved: ${filename} (id=${downloadId})`);
           sendResponse({ success: true, downloadId: downloadId });
         }
-        // Revoke after a delay to ensure download starts
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 15000);
+        // Revoke after delay to let download start
+        setTimeout(() => URL.revokeObjectURL(localUrl), 20000);
       });
     })
     .catch((err) => {

@@ -362,7 +362,31 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // Removed: blob URL transfer approach was over-engineered.
-  // Download is handled directly in the tab via URL.createObjectURL + <a> click.
-  // See generatePDF() in index.js for the current download implementation.
+  // downloadPdf: create offscreen doc, forward blob URL so it can fetch + chrome.downloads.download
+  if (request.action === 'downloadPdf') {
+    const { blobUrl, filename } = request;
+    console.log(`[Download] Requesting offscreen for: ${filename}`);
+
+    // Ensure offscreen document exists (Chrome 116+)
+    chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['DOWNLOADS'],
+      justification: 'Download PDF to subfolder in Downloads/'
+    }).then(() => {
+      // Forward blob URL (tiny message, ~200 bytes) to offscreen
+      chrome.runtime.sendMessage({
+        target: 'offscreen',
+        action: 'downloadPdf',
+        blobUrl: blobUrl,
+        filename: filename
+      }, (response) => {
+        sendResponse(response || { success: false, error: chrome.runtime.lastError?.message });
+      });
+    }).catch((err) => {
+      console.error('[Download] Offscreen createDocument failed:', err.message);
+      sendResponse({ success: false, error: err.message });
+    });
+
+    return true;
+  }
 });
