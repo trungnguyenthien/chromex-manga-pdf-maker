@@ -270,6 +270,40 @@ textarea:focus {
   font-weight: 500;
 }
 
+/* Part Status Badge */
+.part-status-badge {
+  font-size: 11px;
+  font-weight: bold;
+  padding: 3px 10px;
+  border-radius: 12px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-idle {
+  background: #e0e0e0;
+  color: #666;
+}
+
+.status-GettingChap {
+  background: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeeba;
+}
+
+.status-GettingImages {
+  background: #cce5ff;
+  color: #004085;
+  border: 1px solid #b8daff;
+}
+
+.status-Completed {
+  background: #d4edda;
+  color: #155724;
+  border: 1px solid #c3e6cb;
+}
+
 /* Parts Summary */
 .parts-summary-box {
   background: #f0f8ff;

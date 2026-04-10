@@ -148,9 +148,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         console.warn('Failed to clear session cookies:', error.message);
       }
       
-      // Create new tab
+      // Create new tab in the same window (active: false = background tab, doesn't steal focus)
       console.log(`[${ts()} →] Opening tab: ${chapterUrl}`);
-      chrome.tabs.create({ url: chapterUrl, active: false }, async (tab) => {
+      chrome.tabs.create({ url: chapterUrl, active: false, windowId: chrome.windows.WINDOW_ID_CURRENT }, async (tab) => {
       try {
         const tabId = tab.id;
         const tabOpenTime = Date.now();

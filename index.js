@@ -16,6 +16,7 @@ let chapterImageCounts = {}; // Store image count for each chapter URL
 let hasReceivedPageInfo = false; // Flag to track first pageInfo
 let hasAutoReversed = false; // Flag to track if list was auto-reversed once
 let currentPageUrl = ''; // Store current page URL
+let partStatuses = []; // Track status per part: 'idle' | 'GettingChap' | 'GettingImages' | 'Completed'
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -331,12 +332,17 @@ function updateChaptersList() {
 
   let globalIndex = 0; // Track global index across all parts
 
+  // Ensure partStatuses length matches number of parts
+  while (partStatuses.length < parts.length) partStatuses.push('idle');
+
   chaptersList.innerHTML = parts.map((part, partIndex) => {
     const isLastPart = partIndex === parts.length - 1;
     const chapCountLabel = isLastPart ? `${part.length} chap (last)` : `${part.length} chap`;
+    const status = partStatuses[partIndex] || 'idle';
     return `
       <div class="chapter-part" id="part-${partIndex}">
         <div class="chapter-part-header">
+          <span class="part-status-badge status-${status}" id="part-status-${partIndex}">${status}</span>
           <button class="make-part-btn" data-part="${partIndex}">Make Part ${partIndex + 1} — ${chapCountLabel}</button>
           <div class="part-progress" style="display: none;">
             <div class="progress-bar-inline">
@@ -455,7 +461,8 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
   
   // Show progress UI for this specific part
   showPartProgress(partIndex, true);
-  
+  setPartStatus(partIndex, 'GettingChap');
+
   try {
     updatePartProgress(partIndex, 0, 'Initializing...');
     
@@ -523,7 +530,8 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
     }
 
     updatePartProgress(partIndex, 5, `Found ${deduplicatedImages.length} images${removedCount > 0 ? ` (${removedCount} duplicates removed)` : ''}. Processing...`);
-    
+    setPartStatus(partIndex, 'GettingImages');
+
     // Step 2: Download and resize images (5-97%, 92% total)
     const processedImages = [];
     for (let i = 0; i < deduplicatedImages.length; i++) {
@@ -552,19 +560,17 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
     // Step 3: Generate PDF (97-100%, 3% total)
     updatePartProgress(partIndex, 97, 'Creating PDF...');
     await generatePDF(processedImages, partNumber, totalParts);
-    
+
     updatePartProgress(partIndex, 100, 'Done!');
-    
-    // Update chapters list to show image counts (after progress is done)
-    setTimeout(() => {
-      showPartProgress(partIndex, false);
-      updateChaptersList(); // Update to show image counts for next time
-      saveData(); // Save the image counts
-    }, 1500);
-    
+    setPartStatus(partIndex, 'Completed');
+    showPartProgress(partIndex, false);
+    updateChaptersList(); // Update to show image counts
+    saveData();           // Save the image counts
+
   } catch (error) {
     console.error('Error creating PDF:', error);
     updatePartProgress(partIndex, 0, `Error: ${error.message}`);
+    setPartStatus(partIndex, 'idle');
     setTimeout(() => showPartProgress(partIndex, false), 3000);
   }
 }
@@ -789,12 +795,21 @@ function showPartProgress(partIndex, show) {
 function updatePartProgress(partIndex, percent, text) {
   const partEl = document.getElementById(`part-${partIndex}`);
   if (!partEl) return;
-  
+
   const fill = partEl.querySelector('.progress-fill-inline');
   const textEl = partEl.querySelector('.progress-text-inline');
-  
+
   if (fill) fill.style.width = `${percent}%`;
   if (textEl) textEl.textContent = text;
+}
+
+function setPartStatus(partIndex, status) {
+  partStatuses[partIndex] = status;
+  const badge = document.getElementById(`part-status-${partIndex}`);
+  if (badge) {
+    badge.className = `part-status-badge status-${status}`;
+    badge.textContent = status;
+  }
 }
 
 // Save data to localStorage
