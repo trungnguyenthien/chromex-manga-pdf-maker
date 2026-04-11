@@ -304,6 +304,38 @@ textarea:focus {
   border: 1px solid #c3e6cb;
 }
 
+/* ── Header actions ── */
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.revert-btn {
+  background: #6c757d;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.revert-btn:hover { background: #5a6268; }
+
+.auto-download-btn {
+  background: #007bff;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.auto-download-btn:hover { background: #0056b3; }
+.auto-download-btn.active { background: #dc3545; }
+.auto-download-btn.active:hover { background: #c82333; }
+
 /* Parts Summary */
 .parts-summary-box {
   background: #f0f8ff;

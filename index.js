@@ -17,6 +17,9 @@ let hasReceivedPageInfo = false; // Flag to track first pageInfo
 let hasAutoReversed = false; // Flag to track if list was auto-reversed once
 let currentPageUrl = ''; // Store current page URL
 let partStatuses = []; // Track status per part: 'idle' | 'GettingChap' | 'GettingImages' | 'Completed'
+let autoDownloadActive = false;
+let autoDownloadParts = []; // { urls, partNumber, partIndex }
+let autoDownloadQueue = []; // parts waiting to start GettingChap
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -148,6 +151,15 @@ function setupEventListeners() {
     numParts = (isNaN(val) || val < 1) ? null : val;
     saveData();
     updateChaptersList();
+  });
+
+  // Auto-Download button
+  document.getElementById('autoDownloadBtn').addEventListener('click', () => {
+    if (autoDownloadActive) {
+      stopAutoDownload();
+    } else {
+      startAutoDownload();
+    }
   });
 }
 
@@ -453,8 +465,76 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// ── Auto-Download ──────────────────────────────────────────────────────────────
+
+function startAutoDownload() {
+  if (chapterUrls.length === 0) {
+    alert('No chapters to download.');
+    return;
+  }
+  const parts = groupChapters(chapterUrls, currentGroupBy, numParts);
+  autoDownloadParts = parts.map((urls, i) => ({ urls, partNumber: i + 1, partIndex: i }));
+  autoDownloadQueue = [...autoDownloadParts]; // copy
+  autoDownloadActive = true;
+  partStatuses = new Array(parts.length).fill('idle');
+  updateAutoDownloadUI();
+  processNextPart();
+}
+
+function stopAutoDownload() {
+  autoDownloadActive = false;
+  autoDownloadQueue = [];
+  updateAutoDownloadUI();
+}
+
+function updateAutoDownloadUI() {
+  const btn = document.getElementById('autoDownloadBtn');
+  if (!btn) return;
+  if (autoDownloadActive) {
+    btn.textContent = 'Stop Auto-DL';
+    btn.classList.add('active');
+  } else {
+    btn.textContent = 'Auto-Download';
+    btn.classList.remove('active');
+  }
+}
+
+function processNextPart() {
+  if (!autoDownloadActive || autoDownloadQueue.length === 0) {
+    // All parts started; wait for GettingImages to finish (handled by each makePart callback)
+    return;
+  }
+  const next = autoDownloadQueue.shift();
+  const baseUrl = baseUrlInput.value.trim();
+  makePart(next.urls, next.partNumber, next.partIndex, baseUrl, autoDownloadParts.length, true);
+}
+
+function onPartGettingChapDone() {
+  // When a part finishes GettingChap, kick off GettingImages normally
+  // and immediately start the next part's GettingChap
+  if (autoDownloadActive && autoDownloadQueue.length > 0) {
+    processNextPart();
+  } else if (autoDownloadActive && autoDownloadQueue.length === 0) {
+    // All parts are now GettingImages (parallel) or Completed
+    // Nothing left to start; just wait
+  }
+}
+
+function onPartCompleted() {
+  // When a part is done, check if ALL parts are completed → stop auto mode
+  if (!autoDownloadActive) return;
+  const allDone = partStatuses.every(s => s === 'Completed' || s === 'idle');
+  if (allDone) {
+    autoDownloadActive = false;
+    updateAutoDownloadUI();
+    console.log('[AutoDL] All parts completed.');
+  }
+}
+
+// ── makePart ───────────────────────────────────────────────────────────────────
+
 // Make PDF from a part
-async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 1) {
+async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 1, autoMode = false) {
   console.log(`Making Part ${partNumber}:`, urls);
   
   const filter = imageUrlFilterInput.value.trim();
@@ -510,7 +590,9 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
 
     if (allImages.length === 0) {
       updatePartProgress(partIndex, 0, 'No images found!');
+      setPartStatus(partIndex, 'idle');
       setTimeout(() => showPartProgress(partIndex, false), 2000);
+      onPartCompleted();
       return;
     }
 
@@ -531,6 +613,8 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
 
     updatePartProgress(partIndex, 5, `Found ${deduplicatedImages.length} images${removedCount > 0 ? ` (${removedCount} duplicates removed)` : ''}. Processing...`);
     setPartStatus(partIndex, 'GettingImages');
+    // Auto-DL: GettingChap done — start next part's GettingChap immediately (parallel GettingImages allowed)
+    onPartGettingChapDone();
 
     // Step 2: Download and resize images (5-97%, 92% total)
     const processedImages = [];
@@ -553,7 +637,9 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
     
     if (processedImages.length === 0) {
       updatePartProgress(partIndex, 0, 'Failed to process images!');
+      setPartStatus(partIndex, 'idle');
       setTimeout(() => showPartProgress(partIndex, false), 2000);
+      onPartCompleted();
       return;
     }
     
@@ -566,12 +652,14 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
     showPartProgress(partIndex, false);
     updateChaptersList(); // Update to show image counts
     saveData();           // Save the image counts
+    onPartCompleted(partIndex);
 
   } catch (error) {
     console.error('Error creating PDF:', error);
     updatePartProgress(partIndex, 0, `Error: ${error.message}`);
     setPartStatus(partIndex, 'idle');
     setTimeout(() => showPartProgress(partIndex, false), 3000);
+    onPartCompleted(partIndex);
   }
 }
 
