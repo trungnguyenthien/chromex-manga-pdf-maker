@@ -510,24 +510,22 @@ function processNextPart() {
 }
 
 function onPartGettingChapDone() {
-  // When a part finishes GettingChap, kick off GettingImages normally
-  // and immediately start the next part's GettingChap
-  if (autoDownloadActive && autoDownloadQueue.length > 0) {
-    processNextPart();
-  } else if (autoDownloadActive && autoDownloadQueue.length === 0) {
-    // All parts are now GettingImages (parallel) or Completed
-    // Nothing left to start; just wait
-  }
+  // No-op: GettingChap done → just wait for GettingImages to finish in this part
 }
 
 function onPartCompleted() {
-  // When a part is done, check if ALL parts are completed → stop auto mode
   if (!autoDownloadActive) return;
-  const allDone = partStatuses.every(s => s === 'Completed' || s === 'idle');
-  if (allDone) {
-    autoDownloadActive = false;
-    updateAutoDownloadUI();
-    console.log('[AutoDL] All parts completed.');
+  // Start next part only after current part is FULLY complete (sequential)
+  if (autoDownloadQueue.length > 0) {
+    processNextPart();
+  } else {
+    // All parts done
+    const allDone = partStatuses.every(s => s === 'Completed' || s === 'idle');
+    if (allDone) {
+      autoDownloadActive = false;
+      updateAutoDownloadUI();
+      console.log('[AutoDL] All parts completed.');
+    }
   }
 }
 
@@ -565,22 +563,39 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
         ((i / totalChapters) * 5),
         `Fetching chapter ${i + 1}/${totalChapters}...`
       );
-      
-      const imageUrls = await fetchAndExtractImages(chapterUrl, filter);
-      
+
+      // Retry logic: if < 10 images found, retry up to 2 more times
+      let imageUrls = await fetchAndExtractImages(chapterUrl, filter);
+      let bestUrls = [...imageUrls];
+      let attempt = 1;
+
+      while (imageUrls.length < 10 && attempt < 3) {
+        attempt++;
+        console.log(`[Retry] Chapter ${chapterUrl} — attempt ${attempt} (${imageUrls.length} images < 10), retrying...`);
+        await delay(2000); // wait 2s before retry
+        imageUrls = await fetchAndExtractImages(chapterUrl, filter);
+        if (imageUrls.length > bestUrls.length) {
+          bestUrls = imageUrls;
+        }
+      }
+
+      if (imageUrls.length < bestUrls.length) {
+        console.log(`[Retry] Chapter ${chapterUrl}: best=${bestUrls.length}, last=${imageUrls.length} — using best result`);
+      }
+
       // Store image count for this chapter
-      chapterImageCounts[chapterUrl] = imageUrls.length;
-      
+      chapterImageCounts[chapterUrl] = bestUrls.length;
+
       // Log image URLs for this chapter
       console.log(`\n=== Chapter ${i + 1}/${totalChapters} ===`);
       console.log(`URL: ${chapterUrl}`);
-      console.log(`Found ${imageUrls.length} images:`);
-      imageUrls.forEach((url, idx) => {
+      console.log(`Found ${bestUrls.length} images:`);
+      bestUrls.forEach((url, idx) => {
         console.log(`  [${idx + 1}] ${url}`);
       });
       console.log(`==================\n`);
-      
-      allImages.push(...imageUrls);
+
+      allImages.push(...bestUrls);
 
       // Add 1 second delay between chapter requests (except for the last one)
       if (i < urls.length - 1) {
@@ -605,47 +620,79 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
       }
     });
     const deduplicatedImages = Array.from(uniqueImageMap.keys());
-    const removedCount = originalCount - deduplicatedImages.length;
+    const removedUrlDupes = originalCount - deduplicatedImages.length;
 
-    if (removedCount > 0) {
-      console.log(`[AdFilter] Removed ${removedCount} duplicate/ad images (${originalCount} → ${deduplicatedImages.length})`);
+    if (removedUrlDupes > 0) {
+      console.log(`[AdFilter] Removed ${removedUrlDupes} duplicate URL images (${originalCount} → ${deduplicatedImages.length})`);
     }
 
-    updatePartProgress(partIndex, 5, `Found ${deduplicatedImages.length} images${removedCount > 0 ? ` (${removedCount} duplicates removed)` : ''}. Processing...`);
+    updatePartProgress(partIndex, 5, `Found ${deduplicatedImages.length} images${removedUrlDupes > 0 ? ` (${removedUrlDupes} dupes removed)` : ''}. Processing...`);
     setPartStatus(partIndex, 'GettingImages');
     // Auto-DL: GettingChap done — start next part's GettingChap immediately (parallel GettingImages allowed)
     onPartGettingChapDone();
 
-    // Step 2: Download and resize images (5-97%, 92% total)
+    // Step 2: Download and resize images (5-97%, 92% total) — 5 concurrent
+    const CONCURRENT = 5;
     const processedImages = [];
-    for (let i = 0; i < deduplicatedImages.length; i++) {
-      updatePartProgress(
-        partIndex,
-        5 + ((i / deduplicatedImages.length) * 92),
-        `Download image ${i + 1}/${deduplicatedImages.length}...`
+    const seenHashes = new Set();        // pHashes seen so far
+    const duplicateHashes = new Set();   // pHashes appearing 2+ times → remove ALL
+    let skippedByFilter = 0;
+
+    for (let batchStart = 0; batchStart < deduplicatedImages.length; batchStart += CONCURRENT) {
+      const batch = deduplicatedImages.slice(batchStart, batchStart + CONCURRENT);
+
+      const batchResults = await Promise.all(
+        batch.map((url, localIdx) => {
+          const globalIdx = batchStart + localIdx;
+          updatePartProgress(
+            partIndex,
+            5 + ((globalIdx / deduplicatedImages.length) * 92),
+            `Download image ${globalIdx + 1}/${deduplicatedImages.length}...`
+          );
+          return downloadAndResizeImage(url).then(imgData => ({ url, imgData }));
+        })
       );
-      
-      try {
-        const imgData = await downloadAndResizeImage(deduplicatedImages[i]);
-        if (imgData) {
-          processedImages.push(imgData);
+
+      for (const { url, imgData, globalIdx } of batchResults) {
+        if (!imgData) {
+          skippedByFilter++;
+          continue;
         }
-      } catch (error) {
-        console.error(`Failed to process image ${deduplicatedImages[i]}:`, error);
+        const hash = imgData.pHash;
+        if (seenHashes.has(hash)) {
+          duplicateHashes.add(hash);
+          console.log(`[AdFilter] Duplicate pHash detected (${hash.substring(0, 8)}...): ${url}`);
+        } else {
+          seenHashes.add(hash);
+        }
+        processedImages.push(imgData);
       }
     }
-    
-    if (processedImages.length === 0) {
+
+    // Remove ALL images whose pHash appears 2+ times
+    const beforePhashDedup = processedImages.length;
+    const filteredImages = processedImages.filter(img => !duplicateHashes.has(img.pHash));
+    const removedPhashDupes = beforePhashDedup - filteredImages.length;
+
+    duplicateHashes.forEach(hash => {
+      console.log(`[AdFilter] Removed ALL images with duplicate pHash: ${hash.substring(0, 8)}...`);
+    });
+    console.log(`[AdFilter] pHash-deduplication: removed ${removedPhashDupes} images (${beforePhashDedup} → ${filteredImages.length})`);
+
+    if (filteredImages.length === 0) {
       updatePartProgress(partIndex, 0, 'Failed to process images!');
       setPartStatus(partIndex, 'idle');
       setTimeout(() => showPartProgress(partIndex, false), 2000);
       onPartCompleted();
       return;
     }
-    
-    // Step 3: Generate PDF (97-100%, 3% total)
-    updatePartProgress(partIndex, 97, 'Creating PDF...');
-    await generatePDF(processedImages, partNumber, totalParts);
+
+    const totalRemoved = removedUrlDupes + removedPhashDupes + skippedByFilter;
+    console.log(`[AdFilter] Total removed: ${totalRemoved} (URL dupes: ${removedUrlDupes}, filter-skip: ${skippedByFilter}, pHash dupes: ${removedPhashDupes})`);
+    updatePartProgress(partIndex, 97, `Creating PDF (${filteredImages.length} images)...`);
+
+    // Step 3: Generate PDF
+    await generatePDF(filteredImages, partNumber, totalParts);
 
     updatePartProgress(partIndex, 100, 'Done!');
     setPartStatus(partIndex, 'Completed');
@@ -716,73 +763,137 @@ async function fetchAndExtractImages(url, filter) {
 // Download image and resize to 800px width
 async function downloadAndResizeImage(url) {
   try {
+    // If filter is a text string (not CSS selector), skip images not containing the filter
+    const filter = imageUrlFilterInput.value.trim();
+    if (filter) {
+      const hasClassOrIdOrAttr = filter.includes('.') || filter.includes('#') || filter.includes('[');
+      const hasUrlPattern = filter.includes('http') || filter.includes('cdn') || /\.(jpg|png|webp|gif)/.test(filter);
+      const looksLikeSelector = hasClassOrIdOrAttr && !hasUrlPattern;
+      if (!looksLikeSelector && !url.includes(filter)) {
+        console.log(`[AdFilter] Skipped (filter miss): ${url}`);
+        return null;
+      }
+    }
+
+    // Reject known ad domains
+    const adDomains = [
+      'doubleclick', 'googlesyndication', 'googleadservices', 'adsense',
+      'adsserver', 'adnxs', 'advertising', 'banner', 'serving-sys',
+      'popads', 'popup', 'adcash', 'adcolony', 'admob', 'mopub',
+      'reklama', 'adbutler', 'adform', 'criteo', 'taboola', 'outbrain',
+      'revcontent', 'mgid', 'zergnet', 'teads', 'exponential',
+      'bidswitch', 'casalemedia', 'openx', 'pubmatic', 'rubicon',
+      'amazon-adsystem', 'media.net', 'quantserve'
+    ];
+    const lowerUrl = url.toLowerCase();
+    if (adDomains.some(d => lowerUrl.includes(d))) {
+      console.log(`[AdFilter] Skipped (ad domain): ${url}`);
+      return null;
+    }
+
     // Use background script to fetch image (bypasses CORS, Referer set by declarativeNetRequest)
     const response = await chrome.runtime.sendMessage({
       action: 'fetchImage',
       url: url
     });
-    
+
     if (!response.success) {
-      throw new Error(response.error);
+      console.error(`[ImageFetch] Failed: ${url} — ${response.error}`);
+      return null;
     }
-    
+
     // Validate data URL
     if (!response.dataUrl || !response.dataUrl.startsWith('data:')) {
-      throw new Error(`Invalid data URL received for ${url}`);
+      console.error(`[ImageFetch] Invalid data URL: ${url}`);
+      return null;
     }
-    
+
+    // Reject tiny images (<5KB) — ads / tracking pixels
+    const byteSize = Math.round((response.dataUrl.length - response.dataUrl.indexOf(',') - 1) * 0.75);
+    if (byteSize < 5000) {
+      console.log(`[AdFilter] Skipped (tiny ${byteSize} bytes): ${url}`);
+      return null;
+    }
+
     // Create image from base64 data URL
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const img = new Image();
-      
+
       img.onload = () => {
         try {
           const originalWidth = img.width;
           const originalHeight = img.height;
-          
+
           // Always resize to 800px width
           const targetWidth = 800;
           const aspectRatio = originalHeight / originalWidth;
           const newWidth = targetWidth;
           const newHeight = Math.round(targetWidth * aspectRatio);
-          
+
           // Detect orientation AFTER resize for PDF page layout
           const isLandscape = newWidth > newHeight;
-          
+
           console.log(`Image: ${originalWidth}x${originalHeight} → Resize to ${newWidth}x${newHeight} (${isLandscape ? 'Landscape' : 'Portrait'})`);
-          
+
           // Create canvas with target dimensions
           const canvas = document.createElement('canvas');
           canvas.width = newWidth;
           canvas.height = newHeight;
-          
+
           // Draw resized image
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, newWidth, newHeight);
-          
+
           // Get image data
           const imageData = canvas.toDataURL('image/jpeg', 1);
-          
+
+          // Average hash (8x8 grayscale) for perceptual duplicate detection
+          function computeAverageHash(imageEl) {
+            const size = 8;
+            const canvas2 = document.createElement('canvas');
+            canvas2.width = size;
+            canvas2.height = size;
+            const ctx2 = canvas2.getContext('2d');
+            ctx2.drawImage(imageEl, 0, 0, size, size);
+            const data2 = ctx2.getImageData(0, 0, size, size).data;
+            let total = 0;
+            const pixels = [];
+            for (let i = 0; i < data2.length; i += 4) {
+              const g = (data2[i] * 0.3 + data2[i + 1] * 0.59 + data2[i + 2] * 0.11) | 0;
+              pixels.push(g);
+              total += g;
+            }
+            const avg = total / pixels.length;
+            let hash = '';
+            for (const g of pixels) hash += (g >= avg ? '1' : '0');
+            return hash; // 64-bit binary string
+          }
+
           resolve({
+            url: url,
             data: imageData,
+            dataUrl: response.dataUrl,
             width: newWidth,
             height: newHeight,
-            isLandscape: isLandscape
+            isLandscape: isLandscape,
+            pHash: computeAverageHash(img)
           });
         } catch (error) {
-          reject(error);
+          console.error(`[ImageLoad] Resize error: ${url} — ${error.message}`);
+          resolve(null);
         }
       };
-      
-      img.onerror = (e) => {
-        console.error('Image load error:', url, 'Data URL prefix:', response.dataUrl.substring(0, 100));
-        reject(new Error(`Failed to load image: ${url}`));
+
+      img.onerror = () => {
+        console.error(`[ImageLoad] Load error: ${url}`);
+        resolve(null);
       };
-      
+
       img.src = response.dataUrl;
     });
   } catch (error) {
-    throw new Error(`Failed to fetch image ${url}: ${error.message}`);
+    console.error(`[ImageFetch] Catch: ${url} — ${error.message}`);
+    return null;
   }
 }
 

@@ -241,8 +241,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 if (elapsed >= MAX_WAIT) {
                   // Timeout — extract whatever we have now
                   const imageUrls = targetImages.map(img => {
-                    const src = img.getAttribute('src') ||
-                                img.getAttribute('data-src') ||
+                    const src = img.getAttribute('data-src') ||
+                                img.getAttribute('src') ||
                                 img.getAttribute('data-original') ||
                                 img.getAttribute('data-lazy-src');
                     return isLoaded(src) ? resolveUrl(src) : null;
@@ -265,8 +265,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 if (allLoaded && targetImages.length > 0) {
                   const elapsed = Date.now() - startTime;
                   const imageUrls = targetImages.map(img => {
-                    const src = img.getAttribute('src') ||
-                                img.getAttribute('data-src') ||
+                    const src = img.getAttribute('data-src') ||
+                                img.getAttribute('src') ||
                                 img.getAttribute('data-original') ||
                                 img.getAttribute('data-lazy-src');
                     return resolveUrl(src);
