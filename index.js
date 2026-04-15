@@ -369,7 +369,7 @@ function updateChaptersList() {
             const imageCount = chapterImageCounts[url];
             const imageCountText = imageCount !== undefined ? ` <span class="image-count">(${imageCount} images)</span>` : '';
             return `
-              <div class="chapter-url-item">
+              <div class="chapter-url-item" id="chapter-item-${partIndex}-${currentIndex}">
                 <button class="remove-chapter-btn" data-index="${currentIndex}" title="Remove this chapter">&times;</button>
                 <div class="chapter-url">${url}${imageCountText}</div>
               </div>
@@ -556,6 +556,8 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
     const totalChapters = urls.length;
     
     // Step 1: Fetch all chapters and extract images (0-5%)
+    const bestUrlsByChapter = []; // store per-chapter image URLs for status tracking
+
     for (let i = 0; i < urls.length; i++) {
       const chapterUrl = urls[i];
       updatePartProgress(
@@ -585,6 +587,7 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
 
       // Store image count for this chapter
       chapterImageCounts[chapterUrl] = bestUrls.length;
+      bestUrlsByChapter.push([...bestUrls]);
 
       // Log image URLs for this chapter
       console.log(`\n=== Chapter ${i + 1}/${totalChapters} ===`);
@@ -634,9 +637,24 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
     // Step 2: Download and resize images (5-97%, 92% total) — 5 concurrent
     const CONCURRENT = 5;
     const processedImages = [];
-    const seenHashes = new Set();        // pHashes seen so far
-    const duplicateHashes = new Set();   // pHashes appearing 2+ times → remove ALL
     let skippedByFilter = 0;
+
+    // Track per-image status: { url, ok: bool }
+    const imageStatuses = deduplicatedImages.map(url => ({ url, ok: null }));
+
+    // Build chapterStartIndices based on ACTUAL deduplicated images (not chapterImageCounts)
+    const chapterStartIndices = [];
+    let globalIdx = 0;
+    const chapImageUrls = []; // deduplicated URLs per chapter
+
+    for (let c = 0; c < urls.length; c++) {
+      chapterStartIndices.push(globalIdx);
+      // Count how many of this chapter's bestUrls survived deduplication
+      const chapUrls = bestUrlsByChapter[c] || [];
+      const kept = chapUrls.filter(u => uniqueImageMap.has(u));
+      chapImageUrls.push(kept);
+      globalIdx += kept.length;
+    }
 
     for (let batchStart = 0; batchStart < deduplicatedImages.length; batchStart += CONCURRENT) {
       const batch = deduplicatedImages.slice(batchStart, batchStart + CONCURRENT);
@@ -649,35 +667,26 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
             5 + ((globalIdx / deduplicatedImages.length) * 92),
             `Download image ${globalIdx + 1}/${deduplicatedImages.length}...`
           );
-          return downloadAndResizeImage(url).then(imgData => ({ url, imgData }));
+          return downloadAndResizeImage(url).then(imgData => ({ url, imgData, globalIdx }));
         })
       );
 
       for (const { url, imgData, globalIdx } of batchResults) {
-        if (!imgData) {
-          skippedByFilter++;
-          continue;
-        }
-        const hash = imgData.pHash;
-        if (seenHashes.has(hash)) {
-          duplicateHashes.add(hash);
-          console.log(`[AdFilter] Duplicate pHash detected (${hash.substring(0, 8)}...): ${url}`);
+        if (imgData && imgData.ok) {
+          imageStatuses[globalIdx] = { url, ok: true };
+          processedImages.push(imgData);
         } else {
-          seenHashes.add(hash);
+          imageStatuses[globalIdx] = { url, ok: false, error: (imgData && imgData.error) || '' };
+          skippedByFilter++;
         }
-        processedImages.push(imgData);
       }
     }
 
-    // Remove ALL images whose pHash appears 2+ times
-    const beforePhashDedup = processedImages.length;
-    const filteredImages = processedImages.filter(img => !duplicateHashes.has(img.pHash));
-    const removedPhashDupes = beforePhashDedup - filteredImages.length;
+    // Show collapsible chapter image status
+    showChapterImageStatuses(partIndex, urls, chapImageUrls, imageStatuses, chapterStartIndices);
 
-    duplicateHashes.forEach(hash => {
-      console.log(`[AdFilter] Removed ALL images with duplicate pHash: ${hash.substring(0, 8)}...`);
-    });
-    console.log(`[AdFilter] pHash-deduplication: removed ${removedPhashDupes} images (${beforePhashDedup} → ${filteredImages.length})`);
+    // Keep all images (only URL deduplication at parse step)
+    const filteredImages = processedImages;
 
     if (filteredImages.length === 0) {
       updatePartProgress(partIndex, 0, 'Failed to process images!');
@@ -687,8 +696,8 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
       return;
     }
 
-    const totalRemoved = removedUrlDupes + removedPhashDupes + skippedByFilter;
-    console.log(`[AdFilter] Total removed: ${totalRemoved} (URL dupes: ${removedUrlDupes}, filter-skip: ${skippedByFilter}, pHash dupes: ${removedPhashDupes})`);
+    const totalRemoved = removedUrlDupes + skippedByFilter;
+    console.log(`[AdFilter] Total removed: ${totalRemoved} (URL dupes: ${removedUrlDupes}, filter-skip: ${skippedByFilter})`);
     updatePartProgress(partIndex, 97, `Creating PDF (${filteredImages.length} images)...`);
 
     // Step 3: Generate PDF
@@ -697,9 +706,11 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
     updatePartProgress(partIndex, 100, 'Done!');
     setPartStatus(partIndex, 'Completed');
     showPartProgress(partIndex, false);
-    updateChaptersList(); // Update to show image counts
+    updateChaptersList(); // Rebuild DOM first (removes old chapter-urls)
     saveData();           // Save the image counts
-    onPartCompleted(partIndex);
+    // Re-find part element after DOM rebuild, then append status
+    showChapterImageStatuses(partIndex, urls, chapImageUrls, imageStatuses, chapterStartIndices);
+    onPartCompleted();
 
   } catch (error) {
     console.error('Error creating PDF:', error);
@@ -771,7 +782,7 @@ async function downloadAndResizeImage(url) {
       const looksLikeSelector = hasClassOrIdOrAttr && !hasUrlPattern;
       if (!looksLikeSelector && !url.includes(filter)) {
         console.log(`[AdFilter] Skipped (filter miss): ${url}`);
-        return null;
+        return { url, ok: false, error: 'Bị lọc bởi Image Url Filter' };
       }
     }
 
@@ -788,7 +799,7 @@ async function downloadAndResizeImage(url) {
     const lowerUrl = url.toLowerCase();
     if (adDomains.some(d => lowerUrl.includes(d))) {
       console.log(`[AdFilter] Skipped (ad domain): ${url}`);
-      return null;
+      return { url, ok: false, error: 'Ad domain' };
     }
 
     // Use background script to fetch image (bypasses CORS, Referer set by declarativeNetRequest)
@@ -799,20 +810,20 @@ async function downloadAndResizeImage(url) {
 
     if (!response.success) {
       console.error(`[ImageFetch] Failed: ${url} — ${response.error}`);
-      return null;
+      return { url, ok: false, error: `Fetch failed: ${response.error}` };
     }
 
     // Validate data URL
     if (!response.dataUrl || !response.dataUrl.startsWith('data:')) {
       console.error(`[ImageFetch] Invalid data URL: ${url}`);
-      return null;
+      return { url, ok: false, error: 'Invalid data URL' };
     }
 
     // Reject tiny images (<5KB) — ads / tracking pixels
     const byteSize = Math.round((response.dataUrl.length - response.dataUrl.indexOf(',') - 1) * 0.75);
     if (byteSize < 5000) {
       console.log(`[AdFilter] Skipped (tiny ${byteSize} bytes): ${url}`);
-      return null;
+      return { url, ok: false, error: `Quá nhỏ (${byteSize} bytes)` };
     }
 
     // Create image from base64 data URL
@@ -847,53 +858,31 @@ async function downloadAndResizeImage(url) {
           // Get image data
           const imageData = canvas.toDataURL('image/jpeg', 1);
 
-          // Average hash (8x8 grayscale) for perceptual duplicate detection
-          function computeAverageHash(imageEl) {
-            const size = 8;
-            const canvas2 = document.createElement('canvas');
-            canvas2.width = size;
-            canvas2.height = size;
-            const ctx2 = canvas2.getContext('2d');
-            ctx2.drawImage(imageEl, 0, 0, size, size);
-            const data2 = ctx2.getImageData(0, 0, size, size).data;
-            let total = 0;
-            const pixels = [];
-            for (let i = 0; i < data2.length; i += 4) {
-              const g = (data2[i] * 0.3 + data2[i + 1] * 0.59 + data2[i + 2] * 0.11) | 0;
-              pixels.push(g);
-              total += g;
-            }
-            const avg = total / pixels.length;
-            let hash = '';
-            for (const g of pixels) hash += (g >= avg ? '1' : '0');
-            return hash; // 64-bit binary string
-          }
-
           resolve({
             url: url,
+            ok: true,
             data: imageData,
             dataUrl: response.dataUrl,
             width: newWidth,
             height: newHeight,
-            isLandscape: isLandscape,
-            pHash: computeAverageHash(img)
+            isLandscape: isLandscape
           });
         } catch (error) {
           console.error(`[ImageLoad] Resize error: ${url} — ${error.message}`);
-          resolve(null);
+          resolve({ url, ok: false, error: `Resize error: ${error.message}` });
         }
       };
 
       img.onerror = () => {
         console.error(`[ImageLoad] Load error: ${url}`);
-        resolve(null);
+        resolve({ url, ok: false, error: 'Image load error' });
       };
 
       img.src = response.dataUrl;
     });
   } catch (error) {
     console.error(`[ImageFetch] Catch: ${url} — ${error.message}`);
-    return null;
+    return { url, ok: false, error: error.message };
   }
 }
 
@@ -960,18 +949,23 @@ async function generatePDF(images, partNumber, totalParts = 1) {
   const blobUrl = URL.createObjectURL(pdfBlob);
   console.log(`[Download] PDF blob (${(pdfBlob.size / 1024 / 1024).toFixed(2)}MB), saving as ${filename}...`);
 
-  const anchor = document.createElement('a');
-  anchor.href = blobUrl;
-  anchor.download = filename;
-  anchor.style.display = 'none';
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
+  // Use background SW to download (chromium-compatible, no <a> click needed)
+  // Keep blobUrl alive by NOT revoking immediately — SW needs time to fetch it
+  chrome.runtime.sendMessage({
+    action: 'downloadBlob',
+    url: blobUrl,
+    filename: filename
+  }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error('[Download] Error:', chrome.runtime.lastError.message);
+    } else if (response && response.success) {
+      console.log(`[Download] ✓ Saved: ${filename}`);
+    }
+    // Revoke blob AFTER response received (service worker finished fetching)
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+  });
 
-  setTimeout(() => {
-    URL.revokeObjectURL(blobUrl);
-    console.log(`[Download] ✓ Download triggered: ${filename}`);
-  }, 3000);
+  console.log(`[Download] ✓ Download triggered: ${filename}`);
 }
 
 // Inline progress helpers for each part
@@ -989,6 +983,65 @@ function showPartProgress(partIndex, show) {
     btn.style.display = 'block';
     progress.style.display = 'none';
   }
+}
+
+// Show collapsible per-chapter image load status inside a part
+function showChapterImageStatuses(partIndex, urls, chapImageUrls, imageStatuses, chapterStartIndices) {
+  urls.forEach((_chapterUrl, cIdx) => {
+    const start = chapterStartIndices[cIdx];
+    const chapUrls = chapImageUrls[cIdx] || [];
+    const count = chapUrls.length;
+    const end = start + count;
+    const chapStatuses = imageStatuses.slice(start, end);
+
+    // Remove old status if any
+    const chapterItem = document.getElementById(`chapter-item-${partIndex}-${cIdx}`);
+    if (!chapterItem) return;
+
+    const existing = chapterItem.querySelector('.chap-status-block');
+    if (existing) existing.remove();
+
+    const okCount = chapStatuses.filter(s => s.ok === true).length;
+    const failCount = chapStatuses.filter(s => s.ok === false).length;
+
+    const block = document.createElement('div');
+    block.className = 'chap-status-block';
+
+    // Header row
+    const header = document.createElement('div');
+    header.className = 'chap-status-header';
+    header.textContent = `${okCount}✅ / ${failCount}❌ / ${count} total`;
+    block.appendChild(header);
+
+    // Toggle button
+    const toggle = document.createElement('button');
+    toggle.className = 'chap-status-toggle';
+    toggle.textContent = '[+]';
+    header.appendChild(toggle);
+
+    // Image list
+    const list = document.createElement('div');
+    list.className = 'chap-status-list';
+    list.style.display = 'none';
+
+    chapStatuses.forEach((s, imgIdx) => {
+      const item = document.createElement('div');
+      item.className = 'chap-status-item ' + (s.ok === true ? 'ok' : s.ok === false ? 'fail' : 'pending');
+      const icon = s.ok === true ? '✅' : s.ok === false ? '❌' : '⏳';
+      const errInfo = (s.error && s.ok === false) ? ` — ${s.error}` : '';
+      item.textContent = `${icon} ${imgIdx + 1}. ${s.url}${errInfo}`;
+      list.appendChild(item);
+    });
+
+    toggle.addEventListener('click', () => {
+      const visible = list.style.display !== 'none';
+      list.style.display = visible ? 'none' : 'block';
+      toggle.textContent = visible ? '[+]' : '[-]';
+    });
+
+    block.appendChild(list);
+    chapterItem.appendChild(block);
+  });
 }
 
 function updatePartProgress(partIndex, percent, text) {

@@ -335,8 +335,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     });
     
-    // Fetch image as blob (bypasses CORS, Referer set by declarativeNetRequest)
-    fetch(request.url)
+    // Fetch image as blob with explicit Referer header (declarativeNetRequest may not apply to SW fetch)
+    fetch(request.url, {
+      headers: currentReferer ? { 'Referer': currentReferer } : {}
+    })
       .then(response => {
         // Log response details
         console.log('=== Image Fetch Response ===');
@@ -386,6 +388,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     
     // Return true to indicate we'll send response asynchronously
+    return true;
+  }
+
+  // downloadBlob: trigger a file download from a blob URL
+  if (request.action === 'downloadBlob') {
+    chrome.downloads.download({
+      url: request.url,
+      filename: request.filename,
+      saveAs: false
+    }, (downloadId) => {
+      if (chrome.runtime.lastError) {
+        console.error('[Download] Error:', chrome.runtime.lastError.message);
+        sendResponse({ success: false, error: chrome.runtime.lastError.message });
+      } else {
+        console.log('[Download] ✓ Saved:', request.filename, '(id=' + downloadId + ')');
+        sendResponse({ success: true, downloadId: downloadId });
+      }
+    });
     return true;
   }
 });
