@@ -26,6 +26,36 @@ let partReports = {}; // Track image status reports per partIndex
 let autoDownloadActive = false;
 let autoDownloadParts = []; // { urls, partNumber, partIndex }
 let autoDownloadQueue = []; // parts waiting to start GettingChap
+let hasEverDownloaded = false;
+
+// Compute download state for tab title indicator
+function getDownloadState() {
+  const isDownloading = autoDownloadActive || (Array.isArray(partStatuses) && partStatuses.some(s => s === 'GettingChap' || s === 'GettingImages'));
+  const hasCompletedParts = Array.isArray(partStatuses) && partStatuses.some(s => s === 'Completed');
+  const hasStopped = !isDownloading && (hasEverDownloaded || hasCompletedParts);
+  return {
+    isDownloading,
+    hasCompletedParts,
+    hasEverDownloaded,
+    hasStopped,
+    mangaTitle: (mangaTitleInput && mangaTitleInput.value) ? mangaTitleInput.value.trim() : ''
+  };
+}
+
+// Report download state to parent content script (runs in top-level tab)
+function reportDownloadStatusToParent() {
+  const state = getDownloadState();
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({
+        action: 'tabDownloadStatus',
+        ...state
+      }, '*');
+    }
+  } catch (e) {
+    console.warn('[Status] Error reporting download status to parent:', e);
+  }
+}
 
 // Helper: readable label for part status
 function getStatusBadgeText(status) {
@@ -221,6 +251,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const initialDomain = extractDomain(baseUrlInput.value);
   if (initialDomain) updateDomainBadge(initialDomain);
   
+  // Initial report and periodic 4-second check for tab title icon
+  reportDownloadStatusToParent();
+  setInterval(reportDownloadStatusToParent, 4000);
+  
   // Listen for messages from content script
   window.addEventListener('message', (event) => {
     // Handle page info from content script
@@ -235,8 +269,9 @@ document.addEventListener('DOMContentLoaded', () => {
       // Auto-fill Manga Title from page title - always update on first pageInfo
       if (!hasReceivedPageInfo) {
         hasReceivedPageInfo = true;
-        // Clean up the title (remove common suffixes like " - Read Online", etc.)
+        // Clean up the title (remove status emojis and common suffixes like " - Read Online", etc.)
         let cleanTitle = event.data.title
+          .replace(/^([✅⏳⬇️✓✔]|\u2705|\u23f3)\s*/iu, '')
           .replace(/\s*[-|]\s*(Read Online|Manga|Chapter|Latest).*$/i, '')
           .trim();
         mangaTitleInput.value = cleanTitle;
@@ -275,6 +310,12 @@ document.addEventListener('DOMContentLoaded', () => {
       saveData();
     }
     
+    // Handle check download status query from parent
+    if (event.data.action === 'checkDownloadStatus') {
+      reportDownloadStatusToParent();
+      return;
+    }
+
     // Handle query results
     if (event.data.action === 'queryChapterLinksResult') {
       if (event.data.error) {
@@ -380,8 +421,10 @@ function setupEventListeners() {
     chapterUrls.reverse();
     partStatuses = [];
     partReports = {};
+    hasEverDownloaded = false;
     updateChaptersList();
     saveData();
+    reportDownloadStatusToParent();
   });
 
   // NumParts input
@@ -743,11 +786,13 @@ function startAutoDownload() {
   const parts = groupChapters(chapterUrls, currentGroupBy, numParts);
   autoDownloadParts = parts.map((urls, i) => ({ urls, partNumber: i + 1, partIndex: i }));
   autoDownloadQueue = [...autoDownloadParts]; // copy
+  hasEverDownloaded = true;
   autoDownloadActive = true;
   partStatuses = new Array(parts.length).fill('idle');
   partReports = {};
   updateChaptersList();
   updateAutoDownloadUI();
+  reportDownloadStatusToParent();
   processNextPart();
 }
 
@@ -755,6 +800,7 @@ function stopAutoDownload() {
   autoDownloadActive = false;
   autoDownloadQueue = [];
   updateAutoDownloadUI();
+  reportDownloadStatusToParent();
 }
 
 function updateAutoDownloadUI() {
@@ -784,6 +830,7 @@ function onPartGettingChapDone() {
 }
 
 function onPartCompleted() {
+  reportDownloadStatusToParent();
   if (!autoDownloadActive) return;
   // Start next part only after current part is FULLY complete (sequential)
   if (autoDownloadQueue.length > 0) {
@@ -794,6 +841,7 @@ function onPartCompleted() {
     if (allDone) {
       autoDownloadActive = false;
       updateAutoDownloadUI();
+      reportDownloadStatusToParent();
       console.log('[AutoDL] All parts completed.');
     }
   }
@@ -804,12 +852,14 @@ function onPartCompleted() {
 // Make PDF from a part
 async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 1, autoMode = false) {
   console.log(`Making Part ${partNumber}:`, urls);
+  hasEverDownloaded = true;
   
   const filter = imageUrlFilterInput.value.trim();
   
   // Show progress UI for this specific part
   showPartProgress(partIndex, true);
   setPartStatus(partIndex, 'GettingChap');
+  reportDownloadStatusToParent();
 
   try {
     updatePartProgress(partIndex, 0, 'Initializing...');
@@ -1366,6 +1416,9 @@ function updatePartProgress(partIndex, percent, text) {
 
 function setPartStatus(partIndex, status) {
   partStatuses[partIndex] = status;
+  if (status === 'Completed') {
+    hasEverDownloaded = true;
+  }
   const badge = document.getElementById(`part-status-${partIndex}`);
   if (badge) {
     badge.className = `part-status-badge status-${status}`;
@@ -1379,6 +1432,7 @@ function setPartStatus(partIndex, status) {
       partEl.classList.remove('is-completed');
     }
   }
+  reportDownloadStatusToParent();
 }
 
 // Save data to localStorage
@@ -1467,6 +1521,9 @@ function loadSavedData() {
     // Restore part statuses
     if (data.partStatuses && Array.isArray(data.partStatuses)) {
       partStatuses = data.partStatuses;
+      if (partStatuses.some(s => s === 'Completed')) {
+        hasEverDownloaded = true;
+      }
     }
     
     // Update the chapters list display

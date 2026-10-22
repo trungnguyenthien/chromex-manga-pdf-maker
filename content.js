@@ -76,6 +76,56 @@
     border: none;
   `;
   
+  // Store original title and state for tab title indicator
+  let originalDocumentTitle = document.title;
+  let currentDownloadState = {
+    isDownloading: false,
+    hasStopped: false,
+    hasCompletedParts: false,
+    hasEverDownloaded: false,
+    mangaTitle: ''
+  };
+
+  function cleanTitle(title) {
+    if (!title || typeof title !== 'string') return '';
+    return title.replace(/^([✅⏳⬇️✓✔]|\u2705|\u23f3)\s*/iu, '').trim();
+  }
+
+  function syncTabTitle() {
+    const currentClean = cleanTitle(document.title);
+    const baseTitle = currentClean || cleanTitle(originalDocumentTitle) || currentDownloadState.mangaTitle || window.location.hostname;
+    
+    if (currentDownloadState.isDownloading) {
+      const newTitle = `⏳ ${baseTitle}`;
+      if (document.title !== newTitle) {
+        document.title = newTitle;
+      }
+    } else if (currentDownloadState.hasStopped) {
+      const newTitle = `✅ ${baseTitle}`;
+      if (document.title !== newTitle) {
+        document.title = newTitle;
+      }
+    } else {
+      // Idle state: restore base title if it had status icons
+      if (document.title.startsWith('✅ ') || document.title.startsWith('⏳ ')) {
+        const newTitle = baseTitle;
+        if (document.title !== newTitle) {
+          document.title = newTitle;
+        }
+      }
+    }
+  }
+
+  // Periodic 4-second check: check download status and maintain icon ✅ on tab title
+  setInterval(() => {
+    if (iframe && iframe.contentWindow) {
+      try {
+        iframe.contentWindow.postMessage({ action: 'checkDownloadStatus' }, '*');
+      } catch (e) {}
+    }
+    syncTabTitle();
+  }, 4000);
+
   // Send page info to iframe once it's loaded
   iframe.onload = () => {
     iframe.contentWindow.postMessage({
@@ -92,11 +142,23 @@
   modal.appendChild(iframeContainer);
   document.body.appendChild(modal);
   
-  // Listen for messages from iframe to query current page DOM
+  // Listen for messages from iframe to query current page DOM and track download status
   window.addEventListener('message', (event) => {
     // Only accept messages from our iframe
     if (event.source !== iframe.contentWindow) return;
     
+    if (event.data.action === 'tabDownloadStatus') {
+      currentDownloadState.isDownloading = !!event.data.isDownloading;
+      currentDownloadState.hasCompletedParts = !!event.data.hasCompletedParts;
+      currentDownloadState.hasEverDownloaded = !!event.data.hasEverDownloaded;
+      currentDownloadState.hasStopped = !!event.data.hasStopped;
+      if (event.data.mangaTitle) {
+        currentDownloadState.mangaTitle = event.data.mangaTitle;
+      }
+      syncTabTitle();
+      return;
+    }
+
     if (event.data.action === 'queryChapterLinks') {
       try {
         const selector = event.data.selector;
