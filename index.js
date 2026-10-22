@@ -7,6 +7,11 @@ const chaptersList = document.getElementById('chaptersList');
 const groupByButtons = document.querySelectorAll('.groupby-btn');
 const revertListBtn = document.getElementById('revertListBtn');
 const numPartsInput = document.getElementById('numParts');
+const siteConfigSelect = document.getElementById('siteConfigSelect');
+const saveSiteConfigBtn = document.getElementById('saveSiteConfigBtn');
+const deleteSiteConfigBtn = document.getElementById('deleteSiteConfigBtn');
+const currentDomainBadge = document.getElementById('currentDomainBadge');
+const siteConfigStatus = document.getElementById('siteConfigStatus');
 
 // State
 let currentGroupBy = 2;
@@ -16,15 +21,205 @@ let chapterImageCounts = {}; // Store image count for each chapter URL
 let hasReceivedPageInfo = false; // Flag to track first pageInfo
 let hasAutoReversed = false; // Flag to track if list was auto-reversed once
 let currentPageUrl = ''; // Store current page URL
-let partStatuses = []; // Track status per part: 'idle' | 'GettingChap' | 'GettingImages' | 'Completed'
+let partStatuses = []; // Track status per part: 'idle' | 'GettingChap' | 'GettingImages' | 'Completed' | 'Error'
+let partReports = {}; // Track image status reports per partIndex
 let autoDownloadActive = false;
 let autoDownloadParts = []; // { urls, partNumber, partIndex }
 let autoDownloadQueue = []; // parts waiting to start GettingChap
+
+// Helper: readable label for part status
+function getStatusBadgeText(status) {
+  switch (status) {
+    case 'Completed': return '✅ Hoàn thành';
+    case 'GettingChap': return '⏳ Đang quét chap';
+    case 'GettingImages': return '⏳ Đang tải ảnh';
+    case 'Error': return '❌ Lỗi';
+    case 'idle':
+    default: return 'Sẵn sàng';
+  }
+}
+
+// ── Site Configuration Storage (Domain Presets) ────────────────────────────────
+const STORAGE_SITE_CONFIGS_KEY = 'mangaSiteConfigs';
+
+function getAllSiteConfigs() {
+  try {
+    const raw = localStorage.getItem(STORAGE_SITE_CONFIGS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    console.error('Error reading site configs:', e);
+    return {};
+  }
+}
+
+function saveAllSiteConfigs(configs) {
+  try {
+    localStorage.setItem(STORAGE_SITE_CONFIGS_KEY, JSON.stringify(configs));
+  } catch (e) {
+    console.error('Error saving site configs:', e);
+  }
+}
+
+function extractDomain(urlStr) {
+  if (!urlStr || typeof urlStr !== 'string') return '';
+  try {
+    const trimmed = urlStr.trim();
+    if (!trimmed) return '';
+    const validUrl = trimmed.startsWith('http://') || trimmed.startsWith('https://')
+      ? trimmed
+      : 'https://' + trimmed;
+    return new URL(validUrl).hostname.replace(/^www\./, '');
+  } catch (e) {
+    return '';
+  }
+}
+
+function showConfigStatus(msg, type = 'success') {
+  if (!siteConfigStatus) return;
+  siteConfigStatus.textContent = msg;
+  siteConfigStatus.className = `site-config-status ${type}`;
+  clearTimeout(siteConfigStatus._timer);
+  siteConfigStatus._timer = setTimeout(() => {
+    siteConfigStatus.textContent = '';
+  }, 4000);
+}
+
+function updateDomainBadge(domain) {
+  if (!currentDomainBadge) return;
+  if (domain) {
+    currentDomainBadge.textContent = domain;
+    currentDomainBadge.title = `Domain hiện tại: ${domain}`;
+  } else {
+    currentDomainBadge.textContent = 'Chưa xác định';
+    currentDomainBadge.title = 'Chưa xác định domain';
+  }
+}
+
+function populateSiteConfigsDropdown(selectedDomain = '') {
+  if (!siteConfigSelect) return;
+  const configs = getAllSiteConfigs();
+  const domains = Object.keys(configs).sort();
+
+  siteConfigSelect.innerHTML = '<option value="">-- Chọn cấu hình đã lưu --</option>';
+  domains.forEach(d => {
+    const opt = document.createElement('option');
+    opt.value = d;
+    const item = configs[d];
+    const filterCount = (item.imageUrlFilter || '').split('\n').filter(l => l.trim()).length;
+    const filterInfo = filterCount > 0 ? ` (${filterCount} filter)` : '';
+    opt.textContent = `${d}${filterInfo}`;
+    if (d === selectedDomain) {
+      opt.selected = true;
+    }
+    siteConfigSelect.appendChild(opt);
+  });
+}
+
+function loadSiteConfigForDomain(domain, autoQuery = false) {
+  if (!domain) return false;
+  const configs = getAllSiteConfigs();
+  const cfg = configs[domain];
+  if (!cfg) return false;
+
+  console.log(`[SiteConfig] Loading config for ${domain}:`, cfg);
+
+  if (cfg.baseUrl) {
+    baseUrlInput.value = cfg.baseUrl;
+  }
+  if (cfg.imageUrlFilter !== undefined) {
+    imageUrlFilterInput.value = cfg.imageUrlFilter;
+  }
+  if (cfg.chapterSelector !== undefined && cfg.chapterSelector !== '') {
+    urlsChapterTextarea.value = cfg.chapterSelector;
+  }
+  if (cfg.groupBy !== undefined) {
+    currentGroupBy = cfg.groupBy;
+    numParts = null;
+    numPartsInput.value = '';
+    groupByButtons.forEach(btn => {
+      const btnValue = btn.dataset.value === 'all' ? 'all' : parseInt(btn.dataset.value);
+      if (btnValue === currentGroupBy) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+  }
+
+  updateDomainBadge(domain);
+  populateSiteConfigsDropdown(domain);
+  saveData();
+
+  // If selector is present and autoQuery is true, trigger chapter links query
+  const selector = (cfg.chapterSelector || urlsChapterTextarea.value || '').trim();
+  if (autoQuery && selector && !selector.includes('<') && !selector.includes('>')) {
+    console.log(`[SiteConfig] Auto-querying with selector: ${selector}`);
+    window.parent.postMessage({
+      action: 'queryChapterLinks',
+      selector: selector,
+      baseUrl: baseUrlInput.value.trim()
+    }, '*');
+  } else if (urlsChapterTextarea.value) {
+    parseChapterUrls();
+  }
+
+  return true;
+}
+
+function saveCurrentSiteConfig() {
+  const currentBase = baseUrlInput.value.trim();
+  const domain = extractDomain(currentBase) || extractDomain(currentPageUrl);
+  if (!domain) {
+    alert('Vui lòng nhập Base URL hoặc mở trang truyện để xác định domain.');
+    return;
+  }
+
+  const configs = getAllSiteConfigs();
+  const newConfig = {
+    domain: domain,
+    baseUrl: currentBase || `https://${domain}`,
+    imageUrlFilter: imageUrlFilterInput.value.trim(),
+    chapterSelector: urlsChapterTextarea.value.trim(),
+    groupBy: currentGroupBy,
+    updatedAt: Date.now()
+  };
+
+  configs[domain] = newConfig;
+  saveAllSiteConfigs(configs);
+  populateSiteConfigsDropdown(domain);
+  updateDomainBadge(domain);
+  showConfigStatus(`✅ Đã lưu cấu hình cho "${domain}"!`, 'success');
+  console.log(`[SiteConfig] Saved config for ${domain}:`, newConfig);
+}
+
+function deleteCurrentSiteConfig() {
+  const selectedDomain = siteConfigSelect.value || extractDomain(baseUrlInput.value) || extractDomain(currentPageUrl);
+  if (!selectedDomain) {
+    alert('Vui lòng chọn domain cần xóa trong danh sách.');
+    return;
+  }
+
+  const configs = getAllSiteConfigs();
+  if (!configs[selectedDomain]) {
+    alert(`Không tìm thấy cấu hình của domain "${selectedDomain}".`);
+    return;
+  }
+
+  if (confirm(`Bạn có chắc muốn xóa cấu hình của domain "${selectedDomain}"?`)) {
+    delete configs[selectedDomain];
+    saveAllSiteConfigs(configs);
+    populateSiteConfigsDropdown();
+    showConfigStatus(`🗑️ Đã xóa cấu hình "${selectedDomain}"`, 'info');
+  }
+}
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
   loadSavedData();
   setupEventListeners();
+  populateSiteConfigsDropdown();
+  const initialDomain = extractDomain(baseUrlInput.value);
+  if (initialDomain) updateDomainBadge(initialDomain);
   
   // Listen for messages from content script
   window.addEventListener('message', (event) => {
@@ -34,11 +229,8 @@ document.addEventListener('DOMContentLoaded', () => {
       
       // Save current page URL
       currentPageUrl = event.data.url;
-      
-      // Auto-fill Base URL if not already set
-      if (!baseUrlInput.value.trim() || baseUrlInput.value === 'https://comics.vn/') {
-        baseUrlInput.value = event.data.origin;
-      }
+      const currentDomain = extractDomain(event.data.origin || event.data.url);
+      updateDomainBadge(currentDomain);
       
       // Auto-fill Manga Title from page title - always update on first pageInfo
       if (!hasReceivedPageInfo) {
@@ -48,25 +240,39 @@ document.addEventListener('DOMContentLoaded', () => {
           .replace(/\s*[-|]\s*(Read Online|Manga|Chapter|Latest).*$/i, '')
           .trim();
         mangaTitleInput.value = cleanTitle;
-        saveData();
       }
       
-      // Auto-query chapters if we have a saved selector
-      const savedSelector = urlsChapterTextarea.value.trim();
-      if (savedSelector && !savedSelector.includes('<') && !savedSelector.includes('>')) {
-        console.log('Auto-querying with saved selector:', savedSelector);
-        window.parent.postMessage({
-          action: 'queryChapterLinks',
-          selector: savedSelector,
-          baseUrl: baseUrlInput.value.trim()
-        }, '*');
-      } else if (!savedSelector) {
-        // If no selector/URLs provided, use current page as single chapter
-        console.log('No chapter URLs provided, using current page as single chapter');
-        chapterUrls = [currentPageUrl];
-        updateChaptersList();
-        saveData();
+      // Check if we have a saved site config for this domain
+      const configs = getAllSiteConfigs();
+      if (currentDomain && configs[currentDomain]) {
+        console.log(`[SiteConfig] Auto-applying saved config for ${currentDomain}`);
+        loadSiteConfigForDomain(currentDomain, true); // true = autoQuery
+        showConfigStatus(`✓ Tự động nạp cấu hình "${currentDomain}"`, 'success');
+      } else {
+        // Auto-fill Base URL if not already set
+        if (!baseUrlInput.value.trim() || baseUrlInput.value === 'https://comics.vn/') {
+          baseUrlInput.value = event.data.origin;
+        }
+        
+        // Auto-query chapters if we have a saved selector
+        const savedSelector = urlsChapterTextarea.value.trim();
+        if (savedSelector && !savedSelector.includes('<') && !savedSelector.includes('>')) {
+          console.log('Auto-querying with saved selector:', savedSelector);
+          window.parent.postMessage({
+            action: 'queryChapterLinks',
+            selector: savedSelector,
+            baseUrl: baseUrlInput.value.trim()
+          }, '*');
+        } else if (!savedSelector) {
+          // If no selector/URLs provided, use current page as single chapter
+          console.log('No chapter URLs provided, using current page as single chapter');
+          chapterUrls = [currentPageUrl];
+          updateChaptersList();
+          saveData();
+        }
       }
+      
+      saveData();
     }
     
     // Handle query results
@@ -96,6 +302,8 @@ document.addEventListener('DOMContentLoaded', () => {
         hasAutoReversed = true;
       }
       
+      partStatuses = [];
+      partReports = {};
       updateChaptersList();
       saveData();
     }
@@ -113,10 +321,37 @@ function setupEventListeners() {
       // Clear numParts when switching to groupBy buttons
       numParts = null;
       numPartsInput.value = '';
+      partStatuses = [];
+      partReports = {};
       saveData();
       updateChaptersList();
     });
   });
+
+  // Site Config dropdown change
+  if (siteConfigSelect) {
+    siteConfigSelect.addEventListener('change', () => {
+      const selectedDomain = siteConfigSelect.value;
+      if (selectedDomain) {
+        loadSiteConfigForDomain(selectedDomain, true);
+        showConfigStatus(`✓ Đã nạp cấu hình "${selectedDomain}"`, 'success');
+      }
+    });
+  }
+
+  // Save Site Config button
+  if (saveSiteConfigBtn) {
+    saveSiteConfigBtn.addEventListener('click', () => {
+      saveCurrentSiteConfig();
+    });
+  }
+
+  // Delete Site Config button
+  if (deleteSiteConfigBtn) {
+    deleteSiteConfigBtn.addEventListener('click', () => {
+      deleteCurrentSiteConfig();
+    });
+  }
 
   // URL's chapter textarea
   urlsChapterTextarea.addEventListener('input', () => {
@@ -125,6 +360,8 @@ function setupEventListeners() {
 
   // Base URL input
   baseUrlInput.addEventListener('input', () => {
+    const domain = extractDomain(baseUrlInput.value);
+    if (domain) updateDomainBadge(domain);
     parseChapterUrls();
   });
 
@@ -141,6 +378,8 @@ function setupEventListeners() {
   // Revert List button
   revertListBtn.addEventListener('click', () => {
     chapterUrls.reverse();
+    partStatuses = [];
+    partReports = {};
     updateChaptersList();
     saveData();
   });
@@ -149,6 +388,8 @@ function setupEventListeners() {
   numPartsInput.addEventListener('input', () => {
     const val = parseInt(numPartsInput.value.trim());
     numParts = (isNaN(val) || val < 1) ? null : val;
+    partStatuses = [];
+    partReports = {};
     saveData();
     updateChaptersList();
   });
@@ -176,6 +417,8 @@ function parseChapterUrls() {
     } else {
       chapterUrls = [];
     }
+    partStatuses = [];
+    partReports = {};
     updateChaptersList();
     saveData();
     return;
@@ -248,6 +491,8 @@ function parseChapterUrls() {
     hasAutoReversed = true;
   }
 
+  partStatuses = [];
+  partReports = {};
   updateChaptersList();
   saveData();
 }
@@ -287,16 +532,19 @@ function renderPartsSummary(parts) {
     }
   }
 
+  const completedCount = partStatuses.filter(s => s === 'Completed').length;
   const partsInfo = parts.map((p, i) => {
     const isLast = i === parts.length - 1;
     const label = isLast ? ' (last)' : '';
-    return `Part ${i + 1}: ${p.length} chap${label}`;
+    const isCompleted = partStatuses[i] === 'Completed';
+    const statusIcon = isCompleted ? ' <span class="summary-part-done">✅</span>' : '';
+    return `Part ${i + 1}: ${p.length} chap${label}${statusIcon}`;
   }).join(' &nbsp;|&nbsp; ');
 
   let html = `<div class="parts-summary-box">
     <div class="summary-row">
       <span class="summary-label">Total:</span>
-      <span class="summary-value">${total} chapters &nbsp;|&nbsp; ${parts.length} parts</span>
+      <span class="summary-value">${total} chapters &nbsp;|&nbsp; ${parts.length} parts${completedCount > 0 ? ` &nbsp;(<strong style="color: #28a745;">${completedCount}/${parts.length} đã hoàn thành ✅</strong>)` : ''}</span>
     </div>
     <div class="summary-row summary-breakdown">${partsInfo}</div>`;
 
@@ -323,6 +571,8 @@ function renderPartsSummary(parts) {
       numParts = p;
       numPartsInput.value = p;
       groupByButtons.forEach(b => b.classList.remove('active'));
+      partStatuses = [];
+      partReports = {};
       saveData();
       updateChaptersList();
     });
@@ -351,11 +601,20 @@ function updateChaptersList() {
     const isLastPart = partIndex === parts.length - 1;
     const chapCountLabel = isLastPart ? `${part.length} chap (last)` : `${part.length} chap`;
     const status = partStatuses[partIndex] || 'idle';
+    const isCompleted = status === 'Completed';
+
+    const statusBadgeText = getStatusBadgeText(status);
+    const partCardClass = isCompleted ? 'chapter-part is-completed' : 'chapter-part';
+    const btnClass = isCompleted ? 'make-part-btn completed' : 'make-part-btn';
+    const btnText = isCompleted
+      ? `✅ Đã tạo xong Part ${partIndex + 1} — ${chapCountLabel} (Tạo lại)`
+      : `Make Part ${partIndex + 1} — ${chapCountLabel}`;
+
     return `
-      <div class="chapter-part" id="part-${partIndex}">
+      <div class="${partCardClass}" id="part-${partIndex}">
         <div class="chapter-part-header">
-          <span class="part-status-badge status-${status}" id="part-status-${partIndex}">${status}</span>
-          <button class="make-part-btn" data-part="${partIndex}">Make Part ${partIndex + 1} — ${chapCountLabel}</button>
+          <span class="part-status-badge status-${status}" id="part-status-${partIndex}">${statusBadgeText}</span>
+          <button class="${btnClass}" data-part="${partIndex}">${btnText}</button>
           <div class="part-progress" style="display: none;">
             <div class="progress-bar-inline">
               <div class="progress-fill-inline"></div>
@@ -364,12 +623,12 @@ function updateChaptersList() {
           </div>
         </div>
         <div class="chapter-urls">
-          ${part.map((url) => {
+          ${part.map((url, localIdx) => {
             const currentIndex = globalIndex++;
             const imageCount = chapterImageCounts[url];
             const imageCountText = imageCount !== undefined ? ` <span class="image-count">(${imageCount} images)</span>` : '';
             return `
-              <div class="chapter-url-item" id="chapter-item-${partIndex}-${currentIndex}">
+              <div class="chapter-url-item" id="chapter-item-${partIndex}-${localIdx}">
                 <button class="remove-chapter-btn" data-index="${currentIndex}" title="Remove this chapter">&times;</button>
                 <div class="chapter-url">${url}${imageCountText}</div>
               </div>
@@ -379,6 +638,14 @@ function updateChaptersList() {
       </div>
     `;
   }).join('');
+
+  // Restore chapter image statuses for parts that have reports
+  for (let i = 0; i < parts.length; i++) {
+    if (partReports[i]) {
+      const { urls: rUrls, chapImageUrls, imageStatuses, chapterStartIndices } = partReports[i];
+      showChapterImageStatuses(i, rUrls, chapImageUrls, imageStatuses, chapterStartIndices);
+    }
+  }
 
   // Add event listeners to "Make Part" buttons
   document.querySelectorAll('.make-part-btn').forEach(btn => {
@@ -405,7 +672,8 @@ function removeChapterUrl(index) {
     chapterUrls.splice(index, 1);
     console.log(`Removed chapter URL at index ${index}: ${removedUrl}`);
     console.log(`Remaining chapters: ${chapterUrls.length}`);
-    
+    partStatuses = [];
+    partReports = {};
     // Re-group and update display
     updateChaptersList();
     saveData();
@@ -477,6 +745,8 @@ function startAutoDownload() {
   autoDownloadQueue = [...autoDownloadParts]; // copy
   autoDownloadActive = true;
   partStatuses = new Array(parts.length).fill('idle');
+  partReports = {};
+  updateChaptersList();
   updateAutoDownloadUI();
   processNextPart();
 }
@@ -704,21 +974,53 @@ async function makePart(urls, partNumber, partIndex, baseUrl = '', totalParts = 
     await generatePDF(filteredImages, partNumber, totalParts);
 
     updatePartProgress(partIndex, 100, 'Done!');
+    partReports[partIndex] = { urls, chapImageUrls, imageStatuses, chapterStartIndices };
     setPartStatus(partIndex, 'Completed');
     showPartProgress(partIndex, false);
-    updateChaptersList(); // Rebuild DOM first (removes old chapter-urls)
-    saveData();           // Save the image counts
-    // Re-find part element after DOM rebuild, then append status
-    showChapterImageStatuses(partIndex, urls, chapImageUrls, imageStatuses, chapterStartIndices);
+    updateChaptersList(); // Rebuild DOM first with completed state
+    saveData();           // Save the image counts & part statuses
     onPartCompleted();
 
   } catch (error) {
     console.error('Error creating PDF:', error);
     updatePartProgress(partIndex, 0, `Error: ${error.message}`);
-    setPartStatus(partIndex, 'idle');
-    setTimeout(() => showPartProgress(partIndex, false), 3000);
-    onPartCompleted(partIndex);
+    setPartStatus(partIndex, 'Error');
+    setTimeout(() => {
+      showPartProgress(partIndex, false);
+      updateChaptersList();
+    }, 3000);
+    onPartCompleted();
   }
+}
+
+// Parse multiline Image URL Filter (each option on a line)
+function parseFilterRules(filterText) {
+  if (!filterText || !filterText.trim()) {
+    return { selectors: [], includes: [], excludes: [] };
+  }
+  const lines = filterText.split('\n').map(l => l.trim()).filter(Boolean);
+  const selectors = [];
+  const includes = [];
+  const excludes = [];
+
+  for (const line of lines) {
+    if (line.startsWith('!') || line.startsWith('-')) {
+      const ex = line.slice(1).trim();
+      if (ex) excludes.push(ex);
+    } else {
+      const hasClassOrIdOrAttr = line.includes('.') || line.includes('#') || line.includes('[') || line.includes('>');
+      const hasUrlPattern = /http|cdn|:\/|\.(jpg|png|webp|gif|jpeg)/i.test(line);
+      const looksLikeSelector = hasClassOrIdOrAttr && !hasUrlPattern;
+
+      if (looksLikeSelector) {
+        selectors.push(line);
+      } else {
+        includes.push(line);
+      }
+    }
+  }
+
+  return { selectors, includes, excludes };
 }
 
 // Fetch chapter HTML and extract image URLs
@@ -740,26 +1042,20 @@ async function fetchAndExtractImages(url, filter) {
     
     let imageUrls = response.imageUrls || [];
     
-    // Apply filter if provided
+    // Apply multiline filter rules if provided
     if (filter && filter.trim()) {
-      const trimmedFilter = filter.trim();
-      const hasClassOrIdOrAttr = trimmedFilter.includes('.') || 
-                                  trimmedFilter.includes('#') || 
-                                  trimmedFilter.includes('[');
-      const hasUrlPattern = trimmedFilter.includes('http') || 
-                           trimmedFilter.includes('cdn') ||
-                           trimmedFilter.includes('.jpg') ||
-                           trimmedFilter.includes('.png') ||
-                           trimmedFilter.includes('.webp') ||
-                           trimmedFilter.includes('.gif');
-      
-      // If filter looks like a CSS selector, we already handled it server-side
-      // If it's a text filter, apply it here
-      const looksLikeSelector = hasClassOrIdOrAttr && !hasUrlPattern;
-      
-      if (!looksLikeSelector) {
-        // Apply text filter
-        imageUrls = imageUrls.filter(url => url.includes(trimmedFilter));
+      const rules = parseFilterRules(filter);
+      if (rules.excludes.length > 0) {
+        imageUrls = imageUrls.filter(u => {
+          const lower = u.toLowerCase();
+          return !rules.excludes.some(ex => lower.includes(ex.toLowerCase()));
+        });
+      }
+      if (rules.includes.length > 0) {
+        imageUrls = imageUrls.filter(u => {
+          const lower = u.toLowerCase();
+          return rules.includes.some(inc => lower.includes(inc.toLowerCase()));
+        });
       }
     }
     
@@ -774,13 +1070,20 @@ async function fetchAndExtractImages(url, filter) {
 // Download image and resize to 800px width
 async function downloadAndResizeImage(url) {
   try {
-    // If filter is a text string (not CSS selector), skip images not containing the filter
+    // Apply multiline filter rules
     const filter = imageUrlFilterInput.value.trim();
     if (filter) {
-      const hasClassOrIdOrAttr = filter.includes('.') || filter.includes('#') || filter.includes('[');
-      const hasUrlPattern = filter.includes('http') || filter.includes('cdn') || /\.(jpg|png|webp|gif)/.test(filter);
-      const looksLikeSelector = hasClassOrIdOrAttr && !hasUrlPattern;
-      if (!looksLikeSelector && !url.includes(filter)) {
+      const rules = parseFilterRules(filter);
+      const lowerUrl = url.toLowerCase();
+
+      // Check exclude rules (e.g. !ads, !banner)
+      if (rules.excludes.length > 0 && rules.excludes.some(ex => lowerUrl.includes(ex.toLowerCase()))) {
+        console.log(`[AdFilter] Skipped (exclude filter): ${url}`);
+        return { url, ok: false, error: 'Bị lọc bởi Exclude Filter' };
+      }
+
+      // Check include rules (e.g. cdn.domain.com, /chapters/)
+      if (rules.includes.length > 0 && !rules.includes.some(inc => lowerUrl.includes(inc.toLowerCase()))) {
         console.log(`[AdFilter] Skipped (filter miss): ${url}`);
         return { url, ok: false, error: 'Bị lọc bởi Image Url Filter' };
       }
@@ -951,21 +1254,27 @@ async function generatePDF(images, partNumber, totalParts = 1) {
 
   // Use background SW to download (chromium-compatible, no <a> click needed)
   // Keep blobUrl alive by NOT revoking immediately — SW needs time to fetch it
-  chrome.runtime.sendMessage({
-    action: 'downloadBlob',
-    url: blobUrl,
-    filename: filename
-  }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.error('[Download] Error:', chrome.runtime.lastError.message);
-    } else if (response && response.success) {
-      console.log(`[Download] ✓ Saved: ${filename}`);
-    }
-    // Revoke blob AFTER response received (service worker finished fetching)
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+  await new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({
+      action: 'downloadBlob',
+      url: blobUrl,
+      filename: filename
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error('[Download] Error:', chrome.runtime.lastError.message);
+        reject(new Error(chrome.runtime.lastError.message));
+      } else if (response && !response.success) {
+        console.error('[Download] Error:', response.error);
+        reject(new Error(response.error || 'Download failed'));
+      } else {
+        console.log(`[Download] ✓ Saved: ${filename}`);
+        resolve(response);
+      }
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+    });
   });
 
-  console.log(`[Download] ✓ Download triggered: ${filename}`);
+  console.log(`[Download] ✓ Download completed: ${filename}`);
 }
 
 // Inline progress helpers for each part
@@ -1060,7 +1369,15 @@ function setPartStatus(partIndex, status) {
   const badge = document.getElementById(`part-status-${partIndex}`);
   if (badge) {
     badge.className = `part-status-badge status-${status}`;
-    badge.textContent = status;
+    badge.textContent = getStatusBadgeText(status);
+  }
+  const partEl = document.getElementById(`part-${partIndex}`);
+  if (partEl) {
+    if (status === 'Completed') {
+      partEl.classList.add('is-completed');
+    } else {
+      partEl.classList.remove('is-completed');
+    }
   }
 }
 
@@ -1074,7 +1391,8 @@ function saveData() {
     groupBy: currentGroupBy,
     numParts: numParts,
     chapterUrls: chapterUrls,
-    chapterImageCounts: chapterImageCounts
+    chapterImageCounts: chapterImageCounts,
+    partStatuses: partStatuses
   };
   
   localStorage.setItem('mangaPdfMakerData', JSON.stringify(data));
@@ -1144,6 +1462,11 @@ function loadSavedData() {
           btn.classList.remove('active');
         }
       });
+    }
+
+    // Restore part statuses
+    if (data.partStatuses && Array.isArray(data.partStatuses)) {
+      partStatuses = data.partStatuses;
     }
     
     // Update the chapters list display

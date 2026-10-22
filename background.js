@@ -204,33 +204,69 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               return src;
             };
 
-            // Determine which containers/images to track
-            let targetImages = null;
+            // Parse multi-line filter rules (each option on a line)
+            const filterLines = (filterParam || '')
+              .split('\n')
+              .map(l => l.trim())
+              .filter(Boolean);
 
-            if (filterParam && filterParam.trim()) {
-              const trimmedFilter = filterParam.trim();
-              const hasClassOrIdOrAttr = trimmedFilter.includes('.') ||
-                                        trimmedFilter.includes('#') ||
-                                        trimmedFilter.includes('[');
-              const hasUrlPattern = /http|cdn|\.(jpg|png|webp|gif)/i.test(trimmedFilter);
-              const looksLikeSelector = hasClassOrIdOrAttr && !hasUrlPattern;
+            const selectors = [];
+            const includes = [];
+            const excludes = [];
 
-              if (looksLikeSelector) {
-                try {
-                  const containers = document.querySelectorAll(trimmedFilter);
-                  if (containers.length > 0) {
-                    targetImages = [];
-                    containers.forEach(c => {
-                      targetImages.push(...Array.from(c.querySelectorAll('img')));
-                    });
-                  }
-                } catch (e) {}
+            for (const line of filterLines) {
+              if (line.startsWith('!') || line.startsWith('-')) {
+                const ex = line.slice(1).trim();
+                if (ex) excludes.push(ex);
+              } else {
+                const hasClassOrIdOrAttr = line.includes('.') || line.includes('#') || line.includes('[') || line.includes('>');
+                const hasUrlPattern = /http|cdn|:\/|\.(jpg|png|webp|gif|jpeg)/i.test(line);
+                const looksLikeSelector = hasClassOrIdOrAttr && !hasUrlPattern;
+
+                if (looksLikeSelector) {
+                  selectors.push(line);
+                } else {
+                  includes.push(line);
+                }
               }
             }
 
-            if (!targetImages) {
+            // Determine which containers/images to track
+            let targetImages = null;
+
+            if (selectors.length > 0) {
+              targetImages = [];
+              selectors.forEach(sel => {
+                try {
+                  const elements = document.querySelectorAll(sel);
+                  elements.forEach(el => {
+                    if (el.tagName === 'IMG') {
+                      targetImages.push(el);
+                    } else {
+                      targetImages.push(...Array.from(el.querySelectorAll('img')));
+                    }
+                  });
+                } catch (e) {}
+              });
+              targetImages = [...new Set(targetImages)];
+            }
+
+            if (!targetImages || targetImages.length === 0) {
               targetImages = Array.from(document.querySelectorAll('img'));
             }
+
+            // Helper: check if resolved URL matches includes and excludes rules
+            const passesFilter = (url) => {
+              if (!url) return false;
+              const lower = url.toLowerCase();
+              if (excludes.length > 0 && excludes.some(ex => lower.includes(ex.toLowerCase()))) {
+                return false;
+              }
+              if (includes.length > 0 && !includes.some(inc => lower.includes(inc.toLowerCase()))) {
+                return false;
+              }
+              return true;
+            };
 
             return new Promise((resolve) => {
               const startTime = Date.now();
@@ -246,7 +282,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                                 img.getAttribute('data-original') ||
                                 img.getAttribute('data-lazy-src');
                     return isLoaded(src) ? resolveUrl(src) : null;
-                  }).filter(Boolean);
+                  }).filter(Boolean).filter(passesFilter);
 
                   console.log(`[TabExtract] Timeout after ${elapsed}ms, found ${imageUrls.length} images`);
                   resolve({ urls: imageUrls, pageUrl: currentUrl, timedOut: true });
@@ -270,7 +306,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                                 img.getAttribute('data-original') ||
                                 img.getAttribute('data-lazy-src');
                     return resolveUrl(src);
-                  }).filter(Boolean);
+                  }).filter(Boolean).filter(passesFilter);
 
                   console.log(`[TabExtract] All ${imageUrls.length} images loaded in ${elapsed}ms`);
                   resolve({ urls: imageUrls, pageUrl: currentUrl, timedOut: false });
