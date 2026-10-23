@@ -60,7 +60,7 @@ function reportDownloadStatusToParent() {
 // Helper: readable label for part status
 function getStatusBadgeText(status) {
   switch (status) {
-    case 'Completed': return '✅ Hoàn thành';
+    case 'Completed': return '🟣 Hoàn thành';
     case 'GettingChap': return '⏳ Đang quét chap';
     case 'GettingImages': return '⏳ Đang tải ảnh';
     case 'Error': return '❌ Lỗi';
@@ -271,7 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
         hasReceivedPageInfo = true;
         // Clean up the title (remove status emojis and common suffixes like " - Read Online", etc.)
         let cleanTitle = event.data.title
-          .replace(/^([✅⏳⬇️✓✔]|\u2705|\u23f3)\s*/iu, '')
+          .replace(/^([🟣🟪💜🔮✅⏳⬇️✓✔]|\u2705|\u23f3|\u{1f7e3}|\u{1f7ea}|\u{1f49c})\s*/iu, '')
           .replace(/\s*[-|]\s*(Read Online|Manga|Chapter|Latest).*$/i, '')
           .trim();
         mangaTitleInput.value = cleanTitle;
@@ -580,14 +580,14 @@ function renderPartsSummary(parts) {
     const isLast = i === parts.length - 1;
     const label = isLast ? ' (last)' : '';
     const isCompleted = partStatuses[i] === 'Completed';
-    const statusIcon = isCompleted ? ' <span class="summary-part-done">✅</span>' : '';
+    const statusIcon = isCompleted ? ' <span class="summary-part-done">🟣</span>' : '';
     return `Part ${i + 1}: ${p.length} chap${label}${statusIcon}`;
   }).join(' &nbsp;|&nbsp; ');
 
   let html = `<div class="parts-summary-box">
     <div class="summary-row">
       <span class="summary-label">Total:</span>
-      <span class="summary-value">${total} chapters &nbsp;|&nbsp; ${parts.length} parts${completedCount > 0 ? ` &nbsp;(<strong style="color: #28a745;">${completedCount}/${parts.length} đã hoàn thành ✅</strong>)` : ''}</span>
+      <span class="summary-value">${total} chapters &nbsp;|&nbsp; ${parts.length} parts${completedCount > 0 ? ` &nbsp;(<strong style="color: #7c3aed;">${completedCount}/${parts.length} đã hoàn thành 🟣</strong>)` : ''}</span>
     </div>
     <div class="summary-row summary-breakdown">${partsInfo}</div>`;
 
@@ -650,7 +650,7 @@ function updateChaptersList() {
     const partCardClass = isCompleted ? 'chapter-part is-completed' : 'chapter-part';
     const btnClass = isCompleted ? 'make-part-btn completed' : 'make-part-btn';
     const btnText = isCompleted
-      ? `✅ Đã tạo xong Part ${partIndex + 1} — ${chapCountLabel} (Tạo lại)`
+      ? `🟣 Đã tạo xong Part ${partIndex + 1} — ${chapCountLabel} (Tạo lại)`
       : `Make Part ${partIndex + 1} — ${chapCountLabel}`;
 
     return `

@@ -275,13 +275,13 @@ textarea:focus {
 }
 
 .chapter-part.is-completed {
-  border: 2px solid #28a745;
-  background: #f4fbf5;
-  box-shadow: 0 2px 10px rgba(40, 167, 69, 0.12);
+  border: 2px solid #8b5cf6;
+  background: #faf5ff;
+  box-shadow: 0 4px 14px rgba(139, 92, 246, 0.16);
 }
 
 .chapter-part.is-completed .chapter-part-header {
-  border-bottom: 1px solid #d4edda;
+  border-bottom: 1px solid #ede9fe;
   padding-bottom: 10px;
 }
 
@@ -311,14 +311,15 @@ textarea:focus {
 }
 
 .make-part-btn.completed {
-  background: #28a745;
-  border-color: #218838;
+  background: linear-gradient(135deg, #7c3aed 0%, #9333ea 100%);
+  border-color: #6d28d9;
   color: white;
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.3);
 }
 
 .make-part-btn.completed:hover {
-  background: #218838;
-  border-color: #1e7e34;
+  background: linear-gradient(135deg, #6d28d9 0%, #7e22ce 100%);
+  border-color: #581c87;
 }
 
 .chapter-urls {
@@ -436,9 +437,10 @@ textarea:focus {
 }
 
 .status-Completed {
-  background: #28a745;
+  background: linear-gradient(135deg, #7c3aed 0%, #9333ea 100%);
   color: #ffffff;
-  border: 1px solid #218838;
+  border: 1px solid #6d28d9;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.3);
 }
 
 .status-Error {
@@ -448,7 +450,7 @@ textarea:focus {
 }
 
 .summary-part-done {
-  color: #28a745;
+  color: #7c3aed;
   font-weight: bold;
 }
 

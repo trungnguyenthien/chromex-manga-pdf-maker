@@ -86,9 +86,105 @@
     mangaTitle: ''
   };
 
+  let originalFaviconHref = null;
+  let currentFaviconType = 'default';
+
   function cleanTitle(title) {
     if (!title || typeof title !== 'string') return '';
-    return title.replace(/^([✅⏳⬇️✓✔]|\u2705|\u23f3)\s*/iu, '').trim();
+    return title.replace(/^([🟣🟪💜🔮✅⏳⬇️✓✔]|\u2705|\u23f3|\u{1f7e3}|\u{1f7ea}|\u{1f49c})\s*/iu, '').trim();
+  }
+
+  // Dynamically update tab favicon to a stylish purple indicator
+  function updateTabFavicon(type) {
+    if (currentFaviconType === type) return;
+    currentFaviconType = type;
+
+    try {
+      let link = document.querySelector("link[rel*='icon']");
+      if (!originalFaviconHref) {
+        originalFaviconHref = link ? link.href : '';
+      }
+
+      if (type === 'default') {
+        if (originalFaviconHref && link) {
+          link.href = originalFaviconHref;
+        }
+        return;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = 32;
+      canvas.height = 32;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      if (type === 'stopped') {
+        // Purple gradient circular badge
+        const grad = ctx.createLinearGradient(0, 0, 32, 32);
+        grad.addColorStop(0, '#8b5cf6'); // vibrant violet
+        grad.addColorStop(1, '#6d28d9'); // deep purple
+
+        ctx.beginPath();
+        ctx.arc(16, 16, 14.5, 0, Math.PI * 2);
+        ctx.fillStyle = grad;
+        ctx.fill();
+
+        // Subtle outer glow ring
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#c4b5fd';
+        ctx.stroke();
+
+        // Modern crisp white checkmark
+        ctx.beginPath();
+        ctx.moveTo(9, 16);
+        ctx.lineTo(14, 21);
+        ctx.lineTo(23, 11);
+        ctx.lineWidth = 3.5;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+      } else if (type === 'downloading') {
+        // Purple downloading ring indicator
+        const grad = ctx.createLinearGradient(0, 0, 32, 32);
+        grad.addColorStop(0, '#a855f7');
+        grad.addColorStop(1, '#7c3aed');
+
+        ctx.beginPath();
+        ctx.arc(16, 16, 14.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#f5f3ff';
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(16, 16, 14.5, 0, Math.PI * 2);
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = grad;
+        ctx.stroke();
+
+        // Down arrow in purple
+        ctx.beginPath();
+        ctx.moveTo(16, 8.5);
+        ctx.lineTo(16, 18.5);
+        ctx.moveTo(11, 14);
+        ctx.lineTo(16, 19);
+        ctx.lineTo(21, 14);
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = '#7c3aed';
+        ctx.stroke();
+      }
+
+      const dataUrl = canvas.toDataURL('image/png');
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.head.appendChild(link);
+      }
+      link.href = dataUrl;
+    } catch (e) {
+      console.warn('[Favicon] Could not update favicon:', e);
+    }
   }
 
   function syncTabTitle() {
@@ -100,23 +196,26 @@
       if (document.title !== newTitle) {
         document.title = newTitle;
       }
+      updateTabFavicon('downloading');
     } else if (currentDownloadState.hasStopped) {
-      const newTitle = `✅ ${baseTitle}`;
+      const newTitle = `🟣 ${baseTitle}`;
       if (document.title !== newTitle) {
         document.title = newTitle;
       }
+      updateTabFavicon('stopped');
     } else {
       // Idle state: restore base title if it had status icons
-      if (document.title.startsWith('✅ ') || document.title.startsWith('⏳ ')) {
+      if (document.title.startsWith('🟣 ') || document.title.startsWith('✅ ') || document.title.startsWith('⏳ ')) {
         const newTitle = baseTitle;
         if (document.title !== newTitle) {
           document.title = newTitle;
         }
       }
+      updateTabFavicon('default');
     }
   }
 
-  // Periodic 4-second check: check download status and maintain icon ✅ on tab title
+  // Periodic 4-second check: check download status and maintain icon 🟣 on tab title
   setInterval(() => {
     if (iframe && iframe.contentWindow) {
       try {
