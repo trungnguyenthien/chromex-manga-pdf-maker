@@ -183,19 +183,75 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const currentUrl = window.location.href;
             const baseUrl = new URL(currentUrl);
 
-            // Helper: check if a src value is "loaded" (non-empty, not placeholder)
-            const isLoaded = (src) => {
-              if (!src || typeof src !== 'string' || src.trim() === '') return false;
-              // Skip obvious placeholder/loading patterns
-              const lower = src.toLowerCase();
+            // Helper: check if a candidate src string is a valid image URL
+            const isValidImgUrl = (src) => {
+              if (!src || typeof src !== 'string') return false;
+              const s = src.trim();
+              if (!s) return false;
+              // Skip 1x1 transparent gif/png or placeholder SVGs unless it's a real embedded base64 image (> 1000 chars)
+              if (s.startsWith('data:')) {
+                return s.length > 1000;
+              }
+              const lower = s.toLowerCase();
               if (lower.includes('loading') || lower.includes('placeholder') ||
-                  lower.includes('blank') || lower.endsWith('/blank') ||
-                  lower.endsWith('.gif') && lower.includes('1x1')) return false;
+                  lower.includes('blank.gif') || lower.includes('blank.png') ||
+                  lower.includes('1x1.') || lower.includes('spacer.gif') ||
+                  lower.endsWith('/blank') || lower.includes('spinner') ||
+                  lower.includes('default-image')) {
+                return false;
+              }
               return true;
             };
 
-            // Helper: resolve relative URL
+            // Helper: extract best raw src from an <img> element
+            // Prioritizes lazyload attributes (data-original, data-src) before standard src
+            const extractImgSrc = (img) => {
+              if (!img) return null;
+
+              // Priority 1: Lazy-loading attributes (most manga readers store real image URLs here)
+              const lazyAttributes = [
+                'data-original',
+                'data-src',
+                'data-lazy-src',
+                'data-actualsrc',
+                'data-full-url',
+                'data-url',
+                'data-image',
+                'data-cdn'
+              ];
+              for (const attr of lazyAttributes) {
+                const val = img.getAttribute(attr);
+                if (isValidImgUrl(val)) return val;
+              }
+
+              // Priority 2: srcset or data-srcset (extract first or candidate url)
+              const srcset = img.getAttribute('data-srcset') || img.getAttribute('srcset');
+              if (srcset) {
+                const candidate = srcset.split(',')[0].trim().split(/\s+/)[0];
+                if (isValidImgUrl(candidate)) return candidate;
+              }
+
+              // Priority 3: currentSrc property (if browser already loaded/resolved image)
+              if (img.currentSrc && isValidImgUrl(img.currentSrc)) {
+                return img.currentSrc;
+              }
+
+              // Priority 4: standard src attribute
+              const src = img.getAttribute('src');
+              if (isValidImgUrl(src)) return src;
+
+              // Priority 5: img.src DOM property (absolute URL resolved by browser)
+              if (img.src && isValidImgUrl(img.src)) {
+                return img.src;
+              }
+
+              return null;
+            };
+
+            // Helper: resolve relative URL to absolute URL
             const resolveUrl = (src) => {
+              if (!src) return null;
+              if (src.startsWith('data:')) return src;
               if (src.startsWith('//')) return baseUrl.protocol + src;
               if (src.startsWith('/')) return baseUrl.origin + src;
               if (!src.startsWith('http')) {
@@ -215,43 +271,62 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const excludes = [];
 
             for (const line of filterLines) {
+              // 1. Exclude rule: starts with ! or -
               if (line.startsWith('!') || line.startsWith('-')) {
                 const ex = line.slice(1).trim();
                 if (ex) excludes.push(ex);
-              } else {
-                const hasClassOrIdOrAttr = line.includes('.') || line.includes('#') || line.includes('[') || line.includes('>');
-                const hasUrlPattern = /http|cdn|:\/|\.(jpg|png|webp|gif|jpeg)/i.test(line);
-                const looksLikeSelector = hasClassOrIdOrAttr && !hasUrlPattern;
+                continue;
+              }
 
-                if (looksLikeSelector) {
-                  selectors.push(line);
-                } else {
-                  includes.push(line);
-                }
+              // 2. Explicit selector option: selector: ... or css: ... or sel: ...
+              const selectorPrefixMatch = line.match(/^(?:selector|css|sel)\s*[:=]\s*(.+)$/i);
+              if (selectorPrefixMatch) {
+                const sel = selectorPrefixMatch[1].trim();
+                if (sel) selectors.push(sel);
+                continue;
+              }
+
+              // 3. Auto-detect CSS selector
+              const isUrl = /^https?:\/\//i.test(line) || /^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(line);
+              const startsWithSelectorSymbol = /^[.#\[>:~+]/.test(line);
+              const startsWithTagSelector = /^(img|div|section|article|main|figure|p|span|body|html)(\b|[.#\[:>\s])/i.test(line);
+              const containsSelectorChars = /[>+~]|\[\s*[\w-]+(?:\s*[*^$|~]?=\s*['"]?[^'"\]]+['"]?)?\s*\]/i.test(line);
+              const hasClassOrId = (line.includes('.') || line.includes('#')) && !isUrl;
+
+              if (!isUrl && (startsWithSelectorSymbol || startsWithTagSelector || containsSelectorChars || hasClassOrId)) {
+                selectors.push(line);
+              } else {
+                includes.push(line);
               }
             }
 
-            // Determine which containers/images to track
-            let targetImages = null;
+            // Determine which containers/images to track based on selectors
+            let targetImages = [];
 
             if (selectors.length > 0) {
-              targetImages = [];
               selectors.forEach(sel => {
                 try {
                   const elements = document.querySelectorAll(sel);
                   elements.forEach(el => {
+                    // Nếu là img selector thì lấy đúng element img đó
                     if (el.tagName === 'IMG') {
                       targetImages.push(el);
                     } else {
-                      targetImages.push(...Array.from(el.querySelectorAll('img')));
+                      // Còn các loại selector của div (hoặc container khác) thì tự động tìm img trong container đó
+                      const nestedImgs = el.querySelectorAll('img');
+                      targetImages.push(...Array.from(nestedImgs));
                     }
                   });
-                } catch (e) {}
+                } catch (e) {
+                  console.warn('[SelectorQuery] Error querying selector:', sel, e);
+                }
               });
-              targetImages = [...new Set(targetImages)];
+              // Deduplicate elements while preserving document order
+              targetImages = Array.from(new Set(targetImages));
             }
 
             if (!targetImages || targetImages.length === 0) {
+              // Fallback: If no selectors matched or none provided, track all img on page
               targetImages = Array.from(document.querySelectorAll('img'));
             }
 
@@ -268,6 +343,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               return true;
             };
 
+            const getBestResolvedSrc = (img) => {
+              const rawSrc = extractImgSrc(img);
+              if (!rawSrc) return null;
+              const resolved = resolveUrl(rawSrc);
+              return isValidImgUrl(resolved) ? resolved : null;
+            };
+
+            const isImgReady = (img) => {
+              const src = extractImgSrc(img);
+              return !!src && isValidImgUrl(src);
+            };
+
             return new Promise((resolve) => {
               const startTime = Date.now();
 
@@ -275,41 +362,31 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 const elapsed = Date.now() - startTime;
 
                 if (elapsed >= MAX_WAIT) {
-                  // Timeout — extract whatever we have now
-                  const imageUrls = targetImages.map(img => {
-                    const src = img.getAttribute('data-src') ||
-                                img.getAttribute('src') ||
-                                img.getAttribute('data-original') ||
-                                img.getAttribute('data-lazy-src');
-                    return isLoaded(src) ? resolveUrl(src) : null;
-                  }).filter(Boolean).filter(passesFilter);
+                  // Timeout — extract whatever valid images we have now
+                  const imageUrls = targetImages
+                    .map(img => getBestResolvedSrc(img))
+                    .filter(Boolean)
+                    .filter(passesFilter);
+                  const uniqueUrls = Array.from(new Set(imageUrls));
 
-                  console.log(`[TabExtract] Timeout after ${elapsed}ms, found ${imageUrls.length} images`);
-                  resolve({ urls: imageUrls, pageUrl: currentUrl, timedOut: true });
+                  console.log(`[TabExtract] Timeout after ${elapsed}ms, found ${uniqueUrls.length} images`);
+                  resolve({ urls: uniqueUrls, pageUrl: currentUrl, timedOut: true });
                   return;
                 }
 
-                // Check if all images have loaded src
-                const allLoaded = targetImages.every(img => {
-                  const src = img.getAttribute('src') ||
-                              img.getAttribute('data-src') ||
-                              img.getAttribute('data-original') ||
-                              img.getAttribute('data-lazy-src');
-                  return isLoaded(src);
-                });
+                // Check if all images have valid src ready
+                const allLoaded = targetImages.length > 0 && targetImages.every(img => isImgReady(img));
 
-                if (allLoaded && targetImages.length > 0) {
+                if (allLoaded) {
                   const elapsed = Date.now() - startTime;
-                  const imageUrls = targetImages.map(img => {
-                    const src = img.getAttribute('data-src') ||
-                                img.getAttribute('src') ||
-                                img.getAttribute('data-original') ||
-                                img.getAttribute('data-lazy-src');
-                    return resolveUrl(src);
-                  }).filter(Boolean).filter(passesFilter);
+                  const imageUrls = targetImages
+                    .map(img => getBestResolvedSrc(img))
+                    .filter(Boolean)
+                    .filter(passesFilter);
+                  const uniqueUrls = Array.from(new Set(imageUrls));
 
-                  console.log(`[TabExtract] All ${imageUrls.length} images loaded in ${elapsed}ms`);
-                  resolve({ urls: imageUrls, pageUrl: currentUrl, timedOut: false });
+                  console.log(`[TabExtract] All ${uniqueUrls.length} images loaded in ${elapsed}ms`);
+                  resolve({ urls: uniqueUrls, pageUrl: currentUrl, timedOut: false });
                   return;
                 }
 

@@ -24,7 +24,11 @@ Chrome Extension v3 for creating PDFs from manga chapters. Opens in a new tab fo
 
 1. Click the **Manga-Pdf-Maker** extension icon on the toolbar to open the app in a new tab
 2. Enter the base URL of the manga website (e.g., `https://comics.vn/`)
-3. (Optional) Enter an image URL filter pattern
+3. (Optional) Enter an image URL filter pattern or CSS selector:
+   - **img selector**: e.g., `img.page`, `selector: img.chapter` (extracts src directly from matched `<img>` elements)
+   - **div/container selector**: e.g., `div.page-break`, `selector: #reader` (automatically searches for `<img>` elements inside container)
+   - **Include URL pattern**: e.g., `cdn.domain.com`, `/chapters/`
+   - **Exclude pattern**: e.g., `!ads`, `!banner`
 4. Select how you want to group chapters (default is 2)
 5. Paste HTML containing chapter links in the "URL's chapters" textarea
    - The extension will extract all `<a>` tags and combine them with the base URL

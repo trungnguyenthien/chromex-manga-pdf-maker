@@ -1054,19 +1054,32 @@ function parseFilterRules(filterText) {
   const excludes = [];
 
   for (const line of lines) {
+    // 1. Exclude rule: starts with ! or -
     if (line.startsWith('!') || line.startsWith('-')) {
       const ex = line.slice(1).trim();
       if (ex) excludes.push(ex);
-    } else {
-      const hasClassOrIdOrAttr = line.includes('.') || line.includes('#') || line.includes('[') || line.includes('>');
-      const hasUrlPattern = /http|cdn|:\/|\.(jpg|png|webp|gif|jpeg)/i.test(line);
-      const looksLikeSelector = hasClassOrIdOrAttr && !hasUrlPattern;
+      continue;
+    }
 
-      if (looksLikeSelector) {
-        selectors.push(line);
-      } else {
-        includes.push(line);
-      }
+    // 2. Explicit selector option: selector: ... or css: ... or sel: ...
+    const selectorPrefixMatch = line.match(/^(?:selector|css|sel)\s*[:=]\s*(.+)$/i);
+    if (selectorPrefixMatch) {
+      const sel = selectorPrefixMatch[1].trim();
+      if (sel) selectors.push(sel);
+      continue;
+    }
+
+    // 3. Auto-detect CSS selector (tag name like img/div, class, id, or combinators)
+    const isUrl = /^https?:\/\//i.test(line) || /^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(line);
+    const startsWithSelectorSymbol = /^[.#\[>:~+]/.test(line);
+    const startsWithTagSelector = /^(img|div|section|article|main|figure|p|span|body|html)(\b|[.#\[:>\s])/i.test(line);
+    const containsSelectorChars = /[>+~]|\[\s*[\w-]+(?:\s*[*^$|~]?=\s*['"]?[^'"\]]+['"]?)?\s*\]/i.test(line);
+    const hasClassOrId = (line.includes('.') || line.includes('#')) && !isUrl;
+
+    if (!isUrl && (startsWithSelectorSymbol || startsWithTagSelector || containsSelectorChars || hasClassOrId)) {
+      selectors.push(line);
+    } else {
+      includes.push(line);
     }
   }
 

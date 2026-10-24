@@ -14,7 +14,11 @@
 
 2. **Base URL**: Nhập URL gốc của trang web manga (ví dụ: `https://comics.vn/`)
 
-3. **Image Url Filter**: (Tùy chọn) Nhập pattern để lọc URL hình ảnh
+3. **Image Url Filter**: (Tùy chọn) Nhập pattern URL hoặc CSS selector (mỗi điều kiện 1 dòng):
+   - **Selector img**: ví dụ `img.page`, `selector: img.chapter` (lấy trực tiếp `src` từ các thẻ `<img>` phù hợp)
+   - **Selector div/container**: ví dụ `div.page-break`, `selector: #reader` (tự động tìm tất cả thẻ `<img>` bên trong container để lấy `src`)
+   - **Pattern URL bao gồm**: ví dụ `cdn.domain.com`, `/chapters/`
+   - **Pattern URL loại trừ**: bắt đầu bằng `!` hoặc `-`, ví dụ `!ads`, `!banner`
 
 4. **GroupBy**: Chọn cách nhóm các chapter:
    - `1`: Mỗi part có 1 chapter
